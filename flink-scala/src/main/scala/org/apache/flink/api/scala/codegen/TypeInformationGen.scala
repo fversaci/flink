@@ -19,6 +19,7 @@ package org.apache.flink.api.scala.codegen
 
 import java.lang.reflect.{Field, Modifier}
 
+import org.apache.flink.annotation.Internal
 import org.apache.flink.api.common.ExecutionConfig
 import org.apache.flink.api.common.typeinfo._
 import org.apache.flink.api.common.typeutils._
@@ -32,6 +33,7 @@ import scala.collection.mutable
 import scala.language.postfixOps
 import scala.reflect.macros.Context
 
+@Internal
 private[flink] trait TypeInformationGen[C <: Context] {
   this: MacroContextHolder[C]
   with TypeDescriptors[C]
@@ -289,7 +291,7 @@ private[flink] trait TypeInformationGen[C <: Context] {
       desc: UDTDescriptor): c.Expr[TypeInformation[T]] = {
     val tpeClazz = c.Expr[Class[T]](Literal(Constant(desc.tpe)))
     reify {
-      new WritableTypeInfo[T](tpeClazz.splice)
+      TypeExtractor.createHadoopWritableTypeInfo[T](tpeClazz.splice)
     }
   }
 

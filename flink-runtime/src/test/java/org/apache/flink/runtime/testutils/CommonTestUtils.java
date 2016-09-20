@@ -18,7 +18,7 @@
 
 package org.apache.flink.runtime.testutils;
 
-import org.apache.flink.runtime.util.FileUtils;
+import org.apache.flink.util.FileUtils;
 
 import java.io.File;
 import java.io.FileWriter;
@@ -51,7 +51,7 @@ public class CommonTestUtils {
 			try {
 				Thread.sleep(remaining);
 			}
-			catch (InterruptedException e) {}
+			catch (InterruptedException ignored) {}
 			
 			now = System.currentTimeMillis();
 		}
@@ -71,8 +71,8 @@ public class CommonTestUtils {
 	 * Create a temporary log4j configuration for the test.
 	 */
 	public static File createTemporaryLog4JProperties() throws IOException {
-		File log4jProps = File.createTempFile(FileUtils.getRandomFilename(""), "-log4j" +
-				".properties");
+		File log4jProps = File.createTempFile(
+				FileUtils.getRandomFilename(""), "-log4j.properties");
 		log4jProps.deleteOnExit();
 		CommonTestUtils.printLog4jDebugConfig(log4jProps);
 
@@ -137,22 +137,15 @@ public class CommonTestUtils {
 	}
 
 	public static void printLog4jDebugConfig(File file) throws IOException {
-		FileWriter fw = new FileWriter(file);
-		try {
-			PrintWriter writer = new PrintWriter(fw);
-
+		try (PrintWriter writer = new PrintWriter(new FileWriter(file))) {
 			writer.println("log4j.rootLogger=DEBUG, console");
 			writer.println("log4j.appender.console=org.apache.log4j.ConsoleAppender");
 			writer.println("log4j.appender.console.target = System.err");
 			writer.println("log4j.appender.console.layout=org.apache.log4j.PatternLayout");
 			writer.println("log4j.appender.console.layout.ConversionPattern=%-4r [%t] %-5p %c %x - %m%n");
 			writer.println("log4j.logger.org.eclipse.jetty.util.log=OFF");
-
+			writer.println("log4j.logger.org.apache.zookeeper=OFF");
 			writer.flush();
-			writer.close();
-		}
-		finally {
-			fw.close();
 		}
 	}
 
@@ -164,7 +157,6 @@ public class CommonTestUtils {
 			if (!dir.exists() && dir.mkdirs()) {
 				return dir;
 			}
-			System.err.println("Could not use temporary directory " + dir.getAbsolutePath());
 		}
 
 		throw new IOException("Could not create temporary file directory");

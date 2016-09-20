@@ -18,6 +18,8 @@ c * Licensed to the Apache Software Foundation (ASF) under one
 
 package org.apache.flink.api.common.io;
 
+import org.apache.flink.annotation.Public;
+import org.apache.flink.annotation.PublicEvolving;
 import org.apache.flink.api.common.functions.RuntimeContext;
 import org.apache.flink.core.io.InputSplit;
 
@@ -25,6 +27,7 @@ import org.apache.flink.core.io.InputSplit;
  * An abstract stub implementation for Rich input formats.
  * Rich formats have access to their runtime execution context via {@link #getRuntimeContext()}.
  */
+@Public
 public abstract class RichInputFormat<OT, T extends InputSplit> implements InputFormat<OT, T> {
 	
 	private static final long serialVersionUID = 1L;
@@ -46,5 +49,27 @@ public abstract class RichInputFormat<OT, T extends InputSplit> implements Input
 			throw new IllegalStateException("The runtime context has not been initialized yet. Try accessing " +
 			"it in one of the other life cycle methods.");
 		}
+	}
+
+	/**
+	 * Opens this InputFormat instance. This method is called once per parallel instance.
+	 * Resources should be allocated in this method. (e.g. database connections, cache, etc.)
+	 * 
+	 * @see InputFormat
+	 */
+	@PublicEvolving
+	public void openInputFormat() {
+		//do nothing here, just for subclasses
+	}
+
+	/**
+	 * Closes this InputFormat instance. This method is called once per parallel instance.
+	 * Resources allocated during {@link #openInputFormat()} should be closed in this method.
+	 * 
+	 * @see InputFormat
+	 */
+	@PublicEvolving
+	public void closeInputFormat() {
+		//do nothing here, just for subclasses
 	}
 }

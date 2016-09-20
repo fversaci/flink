@@ -41,11 +41,12 @@ import org.apache.flink.runtime.testutils.TestJvmProcess;
 import org.apache.flink.runtime.testutils.ZooKeeperTestUtils;
 import org.apache.flink.runtime.util.ZooKeeperUtils;
 import org.apache.flink.runtime.zookeeper.ZooKeeperTestEnvironment;
-import org.apache.flink.streaming.api.checkpoint.CheckpointNotifier;
+import org.apache.flink.runtime.state.CheckpointListener;
 import org.apache.flink.streaming.api.checkpoint.Checkpointed;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
 import org.apache.flink.streaming.api.functions.sink.RichSinkFunction;
 import org.apache.flink.streaming.api.functions.source.RichParallelSourceFunction;
+import org.apache.flink.util.TestLogger;
 import org.junit.AfterClass;
 import org.junit.Ignore;
 import org.junit.Test;
@@ -58,6 +59,7 @@ import scala.concurrent.duration.FiniteDuration;
 
 import java.io.File;
 import java.io.IOException;
+import java.net.URI;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
@@ -65,12 +67,12 @@ import java.util.Random;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 
-import static com.google.common.base.Preconditions.checkArgument;
+import static org.apache.flink.util.Preconditions.checkArgument;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.fail;
 
 @Ignore
-public class ChaosMonkeyITCase {
+public class ChaosMonkeyITCase extends TestLogger {
 
 	private static final Logger LOG = LoggerFactory.getLogger(ChaosMonkeyITCase.class);
 
@@ -135,19 +137,19 @@ public class ChaosMonkeyITCase {
 		// will be killed. On recovery (which takes some time to bring up the new process etc.),
 		// this test will wait for task managers to reconnect before starting the next count down.
 		// Therefore the delay between retries is not important in this setup.
-		final FiniteDuration killEvery = new FiniteDuration(30, TimeUnit.SECONDS);
+		final FiniteDuration killEvery = new FiniteDuration(5, TimeUnit.SECONDS);
 
 		// Trigger a checkpoint every
-		final int checkpointingIntervalMs = 2000;
+		final int checkpointingIntervalMs = 1000;
 
 		// Total number of kills
-		final int totalNumberOfKills = 5;
+		final int totalNumberOfKills = 10;
 
 		// -----------------------------------------------------------------------------------------
 
 		// Setup
-		Configuration config = ZooKeeperTestUtils.createZooKeeperRecoveryModeConfig(
-				ZooKeeper.getConnectString(), FileStateBackendBasePath.getPath());
+		Configuration config = ZooKeeperTestUtils.createZooKeeperHAConfig(
+				ZooKeeper.getConnectString(), FileStateBackendBasePath.toURI().toString());
 
 		// Akka and restart timeouts
 		config.setString(ConfigConstants.AKKA_WATCH_HEARTBEAT_INTERVAL, "1000 ms");
@@ -318,6 +320,10 @@ public class ChaosMonkeyITCase {
 			LOG.info("Recovery state clean");
 		}
 		catch (Throwable t) {
+			// Print early (in some situations the process logs get too big
+			// for Travis and the root problem is not shown)
+			t.printStackTrace();
+
 			System.out.println("#################################################");
 			System.out.println(" TASK MANAGERS");
 			System.out.println("#################################################");
@@ -334,7 +340,7 @@ public class ChaosMonkeyITCase {
 				jobManagerProcess.printProcessLog();
 			}
 
-			t.printStackTrace();
+			throw t;
 		}
 		finally {
 			for (JobManagerProcess jobManagerProcess : jobManagerProcesses) {
@@ -376,7 +382,7 @@ public class ChaosMonkeyITCase {
 	}
 
 	public static class CheckpointedSequenceSource extends RichParallelSourceFunction<Long>
-			implements Checkpointed<Long>, CheckpointNotifier {
+			implements Checkpointed<Long>, CheckpointListener {
 
 		private static final long serialVersionUID = 0L;
 
@@ -446,7 +452,7 @@ public class ChaosMonkeyITCase {
 	}
 
 	public static class CountingSink extends RichSinkFunction<Long>
-			implements Checkpointed<CountingSink>, CheckpointNotifier {
+			implements Checkpointed<CountingSink>, CheckpointListener {
 
 		private static final Logger LOG = LoggerFactory.getLogger(CountingSink.class);
 
@@ -531,8 +537,14 @@ public class ChaosMonkeyITCase {
 
 		LOG.info("Checking " + ZooKeeper.getClientNamespace() +
 				ConfigConstants.DEFAULT_ZOOKEEPER_CHECKPOINTS_PATH);
-		List<String> checkpoints = ZooKeeper.getChildren(ConfigConstants.DEFAULT_ZOOKEEPER_CHECKPOINTS_PATH);
-		assertEquals("Unclean checkpoints: " + checkpoints, 0, checkpoints.size());
+
+		for (int i = 0; i < 10; i++) {
+			List<String> checkpoints = ZooKeeper.getChildren(ConfigConstants.DEFAULT_ZOOKEEPER_CHECKPOINTS_PATH);
+			assertEquals("Unclean checkpoints: " + checkpoints, 0, checkpoints.size());
+
+			LOG.info("Unclean... retrying in 2s.");
+			Thread.sleep(2000);
+		}
 
 		LOG.info("Checking " + ZooKeeper.getClientNamespace() +
 				ConfigConstants.DEFAULT_ZOOKEEPER_CHECKPOINT_COUNTER_PATH);
@@ -543,7 +555,7 @@ public class ChaosMonkeyITCase {
 
 		LOG.info("Checking file system backend state...");
 
-		File fsCheckpoints = new File(config.getString(FsStateBackendFactory.CHECKPOINT_DIRECTORY_URI_CONF_KEY, ""));
+		File fsCheckpoints = new File(new URI(config.getString(FsStateBackendFactory.CHECKPOINT_DIRECTORY_URI_CONF_KEY, "")).getPath());
 
 		LOG.info("Checking " + fsCheckpoints);
 
@@ -551,22 +563,14 @@ public class ChaosMonkeyITCase {
 		if (files == null) {
 			fail(fsCheckpoints + " does not exist: " + Arrays.toString(FileStateBackendBasePath.listFiles()));
 		}
-		else {
-			assertEquals("Unclean file system checkpoints: " + Arrays.toString(fsCheckpoints.listFiles()),
-					0, files.length);
-		}
 
-		File fsRecovery = new File(config.getString(ConfigConstants.ZOOKEEPER_RECOVERY_PATH, ""));
+		File fsRecovery = new File(new URI(config.getString(ConfigConstants.HA_ZOOKEEPER_STORAGE_PATH, "")).getPath());
 
 		LOG.info("Checking " + fsRecovery);
 
 		files = fsRecovery.listFiles();
 		if (files == null) {
 			fail(fsRecovery + " does not exist: " + Arrays.toString(FileStateBackendBasePath.listFiles()));
-		}
-		else {
-			assertEquals("Unclean file system checkpoints: " + Arrays.toString(fsRecovery.listFiles()),
-					0, files.length);
 		}
 	}
 
@@ -675,7 +679,7 @@ public class ChaosMonkeyITCase {
 
 		for (int i = 0; i < jobManagerProcesses.size(); i++) {
 			JobManagerProcess jobManager = jobManagerProcesses.get(i);
-			if (jobManager.getJobManagerAkkaURL().equals(currentLeader)) {
+			if (jobManager.getJobManagerAkkaURL(timeout).equals(currentLeader)) {
 				leaderIndex = i;
 				break;
 			}
@@ -692,7 +696,7 @@ public class ChaosMonkeyITCase {
 			throws Exception {
 
 		JobManagerProcess jobManager = new JobManagerProcess(jobManagerPid++, config);
-		jobManager.createAndStart();
+		jobManager.startProcess();
 		LOG.info("Created and started {}.", jobManager);
 
 		return jobManager;
@@ -702,7 +706,7 @@ public class ChaosMonkeyITCase {
 			throws Exception {
 
 		TaskManagerProcess taskManager = new TaskManagerProcess(taskManagerPid++, config);
-		taskManager.createAndStart();
+		taskManager.startProcess();
 		LOG.info("Created and started {}.", taskManager);
 
 		return taskManager;

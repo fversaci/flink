@@ -18,7 +18,6 @@
 package org.apache.flink.storm.wrappers;
 
 import backtype.storm.spout.ISpoutOutputCollector;
-
 import org.apache.flink.api.java.tuple.Tuple0;
 import org.apache.flink.api.java.tuple.Tuple25;
 import org.apache.flink.streaming.api.functions.source.SourceFunction.SourceContext;
@@ -27,7 +26,7 @@ import java.util.HashMap;
 import java.util.List;
 
 /**
- * A {@link SpoutCollector} is used by {@link AbstractStormSpoutWrapper} to provided an Storm
+ * A {@link SpoutCollector} is used by {@link SpoutWrapper} to provided an Storm
  * compatible output collector to the wrapped spout. It transforms the emitted Storm tuples into
  * Flink tuples and emits them via the provide {@link SourceContext} object.
  */
@@ -43,14 +42,16 @@ class SpoutCollector<OUT> extends AbstractStormCollector<OUT> implements ISpoutO
 	 * 
 	 * @param numberOfAttributes
 	 *            The number of attributes of the emitted tuples.
+	 * @param taskId
+	 *            The ID of the producer task (negative value for unknown).
 	 * @param flinkContext
 	 *            The Flink source context to be used.
 	 * @throws UnsupportedOperationException
 	 *             if the specified number of attributes is greater than 25
 	 */
-	SpoutCollector(final HashMap<String, Integer> numberOfAttributes,
+	SpoutCollector(final HashMap<String, Integer> numberOfAttributes, final int taskId,
 			final SourceContext<OUT> flinkContext) throws UnsupportedOperationException {
-		super(numberOfAttributes);
+		super(numberOfAttributes, taskId);
 		assert (flinkContext != null);
 		this.flinkContext = flinkContext;
 	}

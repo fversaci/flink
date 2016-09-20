@@ -22,7 +22,8 @@ import org.apache.commons.io.FileUtils;
 import org.apache.flink.api.common.JobID;
 import org.apache.flink.configuration.ConfigConstants;
 import org.apache.flink.configuration.Configuration;
-import org.apache.flink.runtime.jobmanager.RecoveryMode;
+import org.apache.flink.configuration.IllegalConfigurationException;
+import org.apache.flink.runtime.jobmanager.HighAvailabilityMode;
 import org.apache.flink.util.NetUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -30,6 +31,7 @@ import org.slf4j.LoggerFactory;
 import java.io.File;
 import java.io.FileNotFoundException;
 import java.io.IOException;
+import java.net.InetSocketAddress;
 import java.net.ServerSocket;
 import java.net.URL;
 import java.util.ArrayList;
@@ -40,7 +42,7 @@ import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
-import static com.google.common.base.Preconditions.checkNotNull;
+import static org.apache.flink.util.Preconditions.checkNotNull;
 
 /**
  * This class implements the BLOB server. The BLOB server is responsible for listening for incoming requests and
@@ -64,18 +66,18 @@ public class BlobServer extends Thread implements BlobService {
 	/** Is the root directory for file storage */
 	private final File storageDir;
 
-	/** Blob store for recovery */
+	/** Blob store for HA */
 	private final BlobStore blobStore;
 
 	/** Set of currently running threads */
-	private final Set<BlobServerConnection> activeConnections = new HashSet<BlobServerConnection>();
+	private final Set<BlobServerConnection> activeConnections = new HashSet<>();
 
 	/** The maximum number of concurrent connections */
 	private final int maxConnections;
 
 	/**
 	 * Shutdown hook thread to ensure deletion of the storage directory (or <code>null</code> if
-	 * the configured recovery mode does not equal{@link RecoveryMode#STANDALONE})
+	 * the configured high availability mode does not equal{@link HighAvailabilityMode#NONE})
 	 */
 	private final Thread shutdownHook;
 
@@ -88,27 +90,19 @@ public class BlobServer extends Thread implements BlobService {
 	public BlobServer(Configuration config) throws IOException {
 		checkNotNull(config, "Configuration");
 
-		RecoveryMode recoveryMode = RecoveryMode.fromConfig(config);
+		HighAvailabilityMode highAvailabilityMode = HighAvailabilityMode.fromConfig(config);
 
 		// configure and create the storage directory
 		String storageDirectory = config.getString(ConfigConstants.BLOB_STORAGE_DIRECTORY_KEY, null);
 		this.storageDir = BlobUtils.initStorageDirectory(storageDirectory);
 		LOG.info("Created BLOB server storage directory {}", storageDir);
 
-		// No recovery.
-		if (recoveryMode == RecoveryMode.STANDALONE) {
+		if (highAvailabilityMode == HighAvailabilityMode.NONE) {
 			this.blobStore = new VoidBlobStore();
-		}
-		// Recovery. Check that everything has been setup correctly. This is not clean, but it's
-		// better to resolve this with some upcoming changes to the state backend setup.
-		else if (config.containsKey(ConfigConstants.STATE_BACKEND) &&
-				config.containsKey(ConfigConstants.ZOOKEEPER_RECOVERY_PATH)) {
-
+		} else if (highAvailabilityMode == HighAvailabilityMode.ZOOKEEPER) {
 			this.blobStore = new FileSystemBlobStore(config);
-		}
-		// Fallback.
-		else {
-			this.blobStore = new VoidBlobStore();
+		} else {
+			throw new IllegalConfigurationException("Unexpected high availability mode '" + highAvailabilityMode + ".");
 		}
 
 		// configure the maximum number of concurrent connections
@@ -131,7 +125,7 @@ public class BlobServer extends Thread implements BlobService {
 			backlog = ConfigConstants.DEFAULT_BLOB_FETCH_BACKLOG;
 		}
 
-		if (recoveryMode == RecoveryMode.STANDALONE) {
+		if (highAvailabilityMode == HighAvailabilityMode.NONE) {
 			// Add shutdown hook to delete storage directory
 			this.shutdownHook = BlobUtils.addShutdownHook(this, LOG);
 		}
@@ -142,23 +136,17 @@ public class BlobServer extends Thread implements BlobService {
 		//  ----------------------- start the server -------------------
 
 		String serverPortRange = config.getString(ConfigConstants.BLOB_SERVER_PORT, ConfigConstants.DEFAULT_BLOB_SERVER_PORT);
-		Iterator<Integer> ports = NetUtils.getPortRangeFromString(serverPortRange).iterator();
 
-		ServerSocket socketAttempt = null;
-		while(ports.hasNext()) {
-			int port = ports.next();
-			LOG.debug("Trying to open socket on port {}", port);
-			try {
-				socketAttempt = new ServerSocket(port, backlog);
-				break; // we were able to use the port.
-			} catch (IOException | IllegalArgumentException e) {
-				if(LOG.isDebugEnabled()) {
-					LOG.debug("Unable to allocate socket on port", e);
-				} else {
-					LOG.info("Unable to allocate on port {}, due to error: {}", port, e.getMessage());
-				}
+		Iterator<Integer> ports = NetUtils.getPortRangeFromString(serverPortRange);
+
+		final int finalBacklog = backlog;
+		ServerSocket socketAttempt = NetUtils.createSocketFromPorts(ports, new NetUtils.SocketFactory() {
+			@Override
+			public ServerSocket createSocket(int port) throws IOException {
+				return new ServerSocket(port, finalBacklog);
 			}
-		}
+		});
+
 		if(socketAttempt == null) {
 			throw new IOException("Unable to allocate socket for blob server in specified port range: "+serverPortRange);
 		} else {
@@ -310,9 +298,6 @@ public class BlobServer extends Thread implements BlobService {
 				LOG.error("BLOB server failed to properly clean up its storage directory.");
 			}
 
-			// Clean up the recovery directory
-			blobStore.cleanUp();
-
 			// Remove shutdown hook to prevent resource leaks, unless this is invoked by the
 			// shutdown hook itself
 			if (shutdownHook != null && shutdownHook != Thread.currentThread()) {
@@ -331,6 +316,11 @@ public class BlobServer extends Thread implements BlobService {
 				LOG.info("Stopped BLOB server at {}:{}", serverSocket.getInetAddress().getHostAddress(), getPort());
 			}
 		}
+	}
+
+	@Override
+	public BlobClient createClient() throws IOException {
+		return new BlobClient(new InetSocketAddress(serverSocket.getInetAddress(), getPort()));
 	}
 
 	/**
@@ -435,4 +425,5 @@ public class BlobServer extends Thread implements BlobService {
 			return new ArrayList<BlobServerConnection>(activeConnections);
 		}
 	}
+
 }

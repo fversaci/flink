@@ -22,6 +22,7 @@ package org.apache.flink.types.parser;
 import java.util.HashMap;
 import java.util.Map;
 
+import org.apache.flink.annotation.PublicEvolving;
 import org.apache.flink.types.BooleanValue;
 import org.apache.flink.types.ByteValue;
 import org.apache.flink.types.DoubleValue;
@@ -40,6 +41,7 @@ import org.apache.flink.types.StringValue;
  *
  * @param <T> The type that is parsed.
  */
+@PublicEvolving
 public abstract class FieldParser<T> {
 	
 	/**
@@ -67,8 +69,8 @@ public abstract class FieldParser<T> {
 		/** The parser found characters between the end of the quoted string and the delimiter. */
 		UNQUOTED_CHARS_AFTER_QUOTED_STRING,
 
-		/** The string is empty. */
-		EMPTY_STRING,
+		/** The column is empty. */
+		EMPTY_COLUMN,
 
 		/** Invalid Boolean value **/
 		BOOLEAN_INVALID
@@ -77,8 +79,9 @@ public abstract class FieldParser<T> {
 	private ParseErrorState errorState = ParseErrorState.NONE;
 	
 	/**
-	 * Parses the value of a field from the byte array.
-	 * The start position within the byte array and the array's valid length is given. 
+	 * Parses the value of a field from the byte array, taking care of properly reset
+	 * the state of this parser.
+	 * The start position within the byte array and the array's valid length is given.
 	 * The content of the value is delimited by a field delimiter.
 	 * 
 	 * @param bytes The byte array that holds the value.
@@ -90,8 +93,27 @@ public abstract class FieldParser<T> {
 	 * 
 	 * @return The index of the next delimiter, if the field was parsed correctly. A value less than 0 otherwise.
 	 */
-	public abstract int parseField(byte[] bytes, int startPos, int limit, byte[] delim, T reuse);
-	
+	public int resetErrorStateAndParse(byte[] bytes, int startPos, int limit, byte[] delim, T reuse) {
+		resetParserState();
+		return parseField(bytes, startPos, limit, delim, reuse);
+	}
+
+	/**
+	 * Each parser's logic should be implemented inside this method
+	 *
+	 * @see {@link FieldParser#parseField(byte[], int, int, byte[], Object)}
+	 * */
+	protected abstract int parseField(byte[] bytes, int startPos, int limit, byte[] delim, T reuse);
+
+	/**
+	 * Reset the state of the parser. Called as the very first method inside
+	 * {@link FieldParser#resetErrorStateAndParse(byte[], int, int, byte[], Object)}, by default it just reset
+	 * its error state.
+	 * */
+	protected void resetParserState() {
+		this.errorState = ParseErrorState.NONE;
+	}
+
 	/**
 	 * Gets the parsed field. This method returns the value parsed by the last successful invocation of
 	 * {@link #parseField(byte[], int, int, byte[], Object)}. It objects are mutable and reused, it will return

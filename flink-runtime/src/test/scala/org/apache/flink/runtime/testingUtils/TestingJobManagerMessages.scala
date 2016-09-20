@@ -18,14 +18,16 @@
 
 package org.apache.flink.runtime.testingUtils
 
+import java.util.Map
+
 import akka.actor.ActorRef
 import org.apache.flink.api.common.JobID
 import org.apache.flink.api.common.accumulators.Accumulator
 import org.apache.flink.runtime.accumulators.AccumulatorRegistry
+import org.apache.flink.runtime.checkpoint.savepoint.Savepoint
 import org.apache.flink.runtime.executiongraph.{ExecutionAttemptID, ExecutionGraph}
 import org.apache.flink.runtime.instance.ActorGateway
 import org.apache.flink.runtime.jobgraph.JobStatus
-import java.util.Map
 
 object TestingJobManagerMessages {
 
@@ -75,9 +77,22 @@ object TestingJobManagerMessages {
     userAccumulators: Map[String, Accumulator[_,_]])
 
   /** Notifies the sender when the [[TestingJobManager]] has been elected as the leader
-    *
-    */
+   *
+   */
   case object NotifyWhenLeader
+
+  /**
+    * Notifies the sender when the [[TestingJobManager]] receives new clients for jobs
+    */
+  case object NotifyWhenClientConnects
+  /**
+    * Notifes of client connect
+    */
+  case object ClientConnected
+  /**
+    * Notifies when the client has requested class loading information
+    */
+  case object ClassLoadingPropsDelivered
 
   /**
    * Registers to be notified by an [[org.apache.flink.runtime.messages.Messages.Acknowledge]]
@@ -93,6 +108,25 @@ object TestingJobManagerMessages {
     */
   case object DisablePostStop
 
+  /**
+    * Requests a savepoint from the job manager.
+    *
+    * @param savepointPath The path of the savepoint to request.
+    */
+  case class RequestSavepoint(savepointPath: String)
+
+  /**
+    * Response to a savepoint request.
+    *
+    * @param savepoint The requested savepoint or null if none available.
+    */
+  case class ResponseSavepoint(savepoint: Savepoint)
+
   def getNotifyWhenLeader(): AnyRef = NotifyWhenLeader
+  def getNotifyWhenClientConnects(): AnyRef = NotifyWhenClientConnects
   def getDisablePostStop(): AnyRef = DisablePostStop
+
+  def getClientConnected(): AnyRef = ClientConnected
+  def getClassLoadingPropsDelivered(): AnyRef = ClassLoadingPropsDelivered
+
 }

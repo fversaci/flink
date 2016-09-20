@@ -22,7 +22,7 @@ import java.util.Collection;
 import java.util.HashMap;
 import java.util.List;
 import java.util.concurrent.Callable;
-import java.util.concurrent.Executors;
+import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 
@@ -30,20 +30,15 @@ import org.apache.flink.api.common.ExecutionConfig;
 import org.apache.flink.api.common.accumulators.Accumulator;
 import org.apache.flink.api.common.typeinfo.TypeInformation;
 import org.apache.flink.api.java.functions.KeySelector;
-import org.apache.flink.configuration.Configuration;
 import org.apache.flink.runtime.operators.testutils.MockEnvironment;
 import org.apache.flink.runtime.operators.testutils.MockInputSplitProvider;
-import org.apache.flink.streaming.api.graph.StreamConfig;
 import org.apache.flink.streaming.api.operators.OneInputStreamOperator;
 import org.apache.flink.streaming.api.operators.Output;
-import org.apache.flink.runtime.state.StateBackend;
-import org.apache.flink.runtime.state.memory.MemoryStateBackend;
 import org.apache.flink.streaming.runtime.operators.Triggerable;
 import org.apache.flink.streaming.runtime.streamrecord.StreamRecord;
 import org.apache.flink.streaming.runtime.tasks.StreamTask;
 import org.mockito.invocation.InvocationOnMock;
 import org.mockito.stubbing.Answer;
-import org.mockito.stubbing.OngoingStubbing;
 
 import static org.mockito.Matchers.any;
 import static org.mockito.Matchers.anyLong;
@@ -74,47 +69,39 @@ public class MockContext<IN, OUT> {
 		return output;
 	}
 
-	public static <IN, OUT> List<OUT> createAndExecute(OneInputStreamOperator<IN, OUT> operator, List<IN> inputs) {
+	public static <IN, OUT> List<OUT> createAndExecute(OneInputStreamOperator<IN, OUT> operator, List<IN> inputs) throws Exception {
 		return createAndExecuteForKeyedStream(operator, inputs, null, null);
 	}
 	
 	public static <IN, OUT, KEY> List<OUT> createAndExecuteForKeyedStream(
 				OneInputStreamOperator<IN, OUT> operator, List<IN> inputs,
-				KeySelector<IN, KEY> keySelector, TypeInformation<KEY> keyType) {
-		
-		MockContext<IN, OUT> mockContext = new MockContext<IN, OUT>(inputs);
+				KeySelector<IN, KEY> keySelector, TypeInformation<KEY> keyType) throws Exception {
 
-		StreamConfig config = new StreamConfig(new Configuration());
-		if (keySelector != null && keyType != null) {
-			config.setStateKeySerializer(keyType.createSerializer(new ExecutionConfig()));
-			config.setStatePartitioner(keySelector);
+		OneInputStreamOperatorTestHarness<IN, OUT> testHarness =
+				new KeyedOneInputStreamOperatorTestHarness<>(operator, keySelector, keyType);
+
+		testHarness.setup();
+		testHarness.open();
+		
+		operator.open();
+
+		for (IN in: inputs) {
+			testHarness.processElement(new StreamRecord<>(in));
 		}
-		
-		final ScheduledExecutorService timerService = Executors.newSingleThreadScheduledExecutor();
-		final Object lock = new Object();
-		final StreamTask<?, ?> mockTask = createMockTaskWithTimer(timerService, lock);
-				
-		operator.setup(mockTask, config, mockContext.output);
-		try {
-			operator.open();
 
-			StreamRecord<IN> record = new StreamRecord<IN>(null);
-			for (IN in: inputs) {
-				record = record.replace(in);
-				synchronized (lock) {
-					operator.setKeyContextElement(record);
-					operator.processElement(record);
-				}
+		testHarness.close();
+
+		ConcurrentLinkedQueue<Object> output = testHarness.getOutput();
+
+		List<OUT> result = new ArrayList<>();
+
+		for (Object o : output) {
+			if (o instanceof StreamRecord) {
+				result.add((OUT) ((StreamRecord) o).getValue());
 			}
-
-			operator.close();
-		} catch (Exception e) {
-			throw new RuntimeException("Cannot invoke operator.", e);
-		} finally {
-			timerService.shutdownNow();
 		}
 
-		return mockContext.getOutputs();
+		return result;
 	}
 
 	private static StreamTask<?, ?> createMockTaskWithTimer(
@@ -148,12 +135,6 @@ public class MockContext<IN, OUT> {
 			}
 		}).when(task).registerTimer(anyLong(), any(Triggerable.class));
 
-		// ugly Java generic hacks to get the generic state backend into the mock
-		@SuppressWarnings("unchecked")
-		OngoingStubbing<StateBackend<?>> stubbing =
-				(OngoingStubbing<StateBackend<?>>) (OngoingStubbing<?>) when(task.getStateBackend());
-		stubbing.thenReturn(MemoryStateBackend.defaultInstance());
-		
 		return task;
 	}
 }

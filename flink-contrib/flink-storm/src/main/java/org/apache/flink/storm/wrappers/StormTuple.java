@@ -37,36 +37,63 @@ import java.util.List;
 /**
  * {@link StormTuple} converts a Flink tuple of type {@code IN} into a Storm tuple.
  */
-class StormTuple<IN> implements backtype.storm.tuple.Tuple {
+public class StormTuple<IN> implements backtype.storm.tuple.Tuple {
 
-	/** The Storm representation of the original Flink tuple */
+	/** The Storm representation of the original Flink tuple. */
 	private final Values stormTuple;
-	/** The schema (ie, ordered field names) of the tuple */
+	/** The schema (ie, ordered field names) of this tuple. */
 	private final Fields schema;
+	/** The task ID where this tuple was produced. */
+	private final int producerTaskId;
+	/** The input stream from which this tuple was received. */
+	private final String producerStreamId;
+	/** The producer's component ID of this tuple. */
+	private final String producerComponentId;
+	/** The message that is associated with this tuple. */
+	private final MessageId messageId;
+
 
 	/**
-	 * Create a new Storm tuple from the given Flink tuple. The provided {@code nameIndexMap} is ignored for raw input
-	 * types.
+	 * Create a new Storm tuple from the given Flink tuple.
 	 * 
 	 * @param flinkTuple
-	 * 		The Flink tuple to be converted.
+	 *            The Flink tuple to be converted.
 	 * @param schema
-	 * 		The schema (ie, ordered field names) of the tuple.
+	 *            The schema (ie, ordered field names) of the tuple.
+	 * @param producerTaskId
+	 *            The task ID of the producer (a valid, ie, non-negative ID, implicates the truncation of the last
+	 *            attribute of {@code flinkTuple}).
+	 * @param producerStreamId
+	 *            The input stream ID from which this tuple was received.
+	 * @param producerComponentId
+	 *            The component ID of the producer.
+	 * @param messageId
+	 *            The message ID of this tuple.
 	 */
-	StormTuple(final IN flinkTuple, final Fields schema) {
+	public StormTuple(final IN flinkTuple, final Fields schema, final int producerTaskId, final String producerStreamId, final String producerComponentId, final MessageId messageId) {
 		if (flinkTuple instanceof org.apache.flink.api.java.tuple.Tuple) {
-			this.schema = schema;
 			final org.apache.flink.api.java.tuple.Tuple t = (org.apache.flink.api.java.tuple.Tuple) flinkTuple;
 
-			final int numberOfAttributes = t.getArity();
+			final int numberOfAttributes;
+			// does flinkTuple carry producerTaskId as last attribute?
+			if (producerTaskId < 0) {
+				numberOfAttributes = t.getArity();
+			} else {
+				numberOfAttributes = t.getArity() - 1;
+			}
 			this.stormTuple = new Values();
 			for (int i = 0; i < numberOfAttributes; ++i) {
 				this.stormTuple.add(t.getField(i));
 			}
 		} else {
-			this.schema = null;
 			this.stormTuple = new Values(flinkTuple);
 		}
+
+		this.schema = schema;
+		this.producerTaskId = producerTaskId;
+		this.producerStreamId = producerStreamId;
+		this.producerComponentId = producerComponentId;
+		this.messageId = messageId;
 	}
 
 	@Override
@@ -266,62 +293,100 @@ class StormTuple<IN> implements backtype.storm.tuple.Tuple {
 
 	@Override
 	public GlobalStreamId getSourceGlobalStreamid() {
-		// not sure if Flink can support this
-		throw new UnsupportedOperationException();
+		return new GlobalStreamId(this.producerComponentId, this.producerStreamId);
 	}
 
 	@Override
 	public String getSourceComponent() {
-		// not sure if Flink can support this
-		throw new UnsupportedOperationException();
+		return this.producerComponentId;
 	}
 
 	@Override
 	public int getSourceTask() {
-		// not sure if Flink can support this
-		throw new UnsupportedOperationException();
+		return this.producerTaskId;
 	}
 
 	@Override
 	public String getSourceStreamId() {
-		// not sure if Flink can support this
-		throw new UnsupportedOperationException();
+		return this.producerStreamId;
 	}
 
 	@Override
 	public MessageId getMessageId() {
-		// not sure if Flink can support this
-		throw new UnsupportedOperationException();
+		return this.messageId;
 	}
 
 	@Override
 	public int hashCode() {
 		final int prime = 31;
 		int result = 1;
-		result = (prime * result) + ((this.stormTuple == null) ? 0 : this.stormTuple.hashCode());
+		result = prime * result + ((messageId == null) ? 0 : messageId.hashCode());
+		result = prime * result
+				+ ((producerComponentId == null) ? 0 : producerComponentId.hashCode());
+		result = prime * result + ((producerStreamId == null) ? 0 : producerStreamId.hashCode());
+		result = prime * result + producerTaskId;
+		result = prime * result + ((schema == null) ? 0 : schema.toList().hashCode());
+		result = prime * result + ((stormTuple == null) ? 0 : stormTuple.hashCode());
 		return result;
 	}
 
+	@SuppressWarnings("rawtypes")
 	@Override
-	public boolean equals(final Object obj) {
+	public boolean equals(Object obj) {
 		if (this == obj) {
 			return true;
 		}
 		if (obj == null) {
 			return false;
 		}
-		if (this.getClass() != obj.getClass()) {
+		if (getClass() != obj.getClass()) {
 			return false;
 		}
-		final StormTuple<?> other = (StormTuple<?>) obj;
-		if (this.stormTuple == null) {
+		StormTuple other = (StormTuple) obj;
+		if (messageId == null) {
+			if (other.messageId != null) {
+				return false;
+			}
+		} else if (!messageId.equals(other.messageId)) {
+			return false;
+		}
+		if (producerComponentId == null) {
+			if (other.producerComponentId != null) {
+				return false;
+			}
+		} else if (!producerComponentId.equals(other.producerComponentId)) {
+			return false;
+		}
+		if (producerStreamId == null) {
+			if (other.producerStreamId != null) {
+				return false;
+			}
+		} else if (!producerStreamId.equals(other.producerStreamId)) {
+			return false;
+		}
+		if (producerTaskId != other.producerTaskId) {
+			return false;
+		}
+		if (schema == null) {
+			if (other.schema != null) {
+				return false;
+			}
+		} else if (!schema.toList().equals(other.schema.toList())) {
+			return false;
+		}
+		if (stormTuple == null) {
 			if (other.stormTuple != null) {
 				return false;
 			}
-		} else if (!this.stormTuple.equals(other.stormTuple)) {
+		} else if (!stormTuple.equals(other.stormTuple)) {
 			return false;
 		}
 		return true;
 	}
 
+	@Override
+	public String toString() {
+		return "StormTuple{ " + stormTuple.toString() + "[" + this.producerComponentId + ","
+				+ this.producerStreamId + "," + this.producerTaskId + "," + this.messageId + "]}";
+	}
 }

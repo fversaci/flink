@@ -22,10 +22,12 @@ import static org.apache.flink.runtime.executiongraph.ExecutionGraphTestUtils.*;
 import static org.junit.Assert.*;
 import static org.mockito.Mockito.mock;
 
-import java.util.Arrays;
+import java.util.Collections;
 
+import org.apache.flink.api.common.ExecutionConfig;
 import org.apache.flink.configuration.Configuration;
 import org.apache.flink.runtime.akka.AkkaUtils;
+import org.apache.flink.runtime.executiongraph.restart.NoRestartStrategy;
 import org.apache.flink.runtime.instance.SimpleSlot;
 import org.apache.flink.runtime.jobgraph.JobVertex;
 import org.apache.flink.api.common.JobID;
@@ -33,6 +35,7 @@ import org.apache.flink.runtime.jobgraph.JobStatus;
 import org.apache.flink.runtime.jobgraph.JobVertexID;
 import org.apache.flink.runtime.jobgraph.tasks.AbstractInvokable;
 import org.apache.flink.runtime.testingUtils.TestingUtils;
+import org.apache.flink.util.SerializedValue;
 import org.junit.Test;
 
 public class ExecutionStateProgressTest {
@@ -48,13 +51,14 @@ public class ExecutionStateProgressTest {
 			ajv.setInvokableClass(mock(AbstractInvokable.class).getClass());
 
 			ExecutionGraph graph = new ExecutionGraph(
-					TestingUtils.defaultExecutionContext(),
-					jid,
-					"test job",
-					new Configuration(),
-					AkkaUtils.getDefaultTimeout());
-
-			graph.attachJobGraph(Arrays.asList(ajv));
+				TestingUtils.defaultExecutionContext(), 
+				jid, 
+				"test job", 
+				new Configuration(),
+				new SerializedValue<>(new ExecutionConfig()),
+				AkkaUtils.getDefaultTimeout(),
+				new NoRestartStrategy());
+			graph.attachJobGraph(Collections.singletonList(ajv));
 
 			setGraphStatus(graph, JobStatus.RUNNING);
 

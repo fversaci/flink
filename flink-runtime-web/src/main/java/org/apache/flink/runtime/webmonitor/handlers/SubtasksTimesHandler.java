@@ -23,7 +23,7 @@ import com.fasterxml.jackson.core.JsonGenerator;
 import org.apache.flink.runtime.execution.ExecutionState;
 import org.apache.flink.runtime.executiongraph.ExecutionJobVertex;
 import org.apache.flink.runtime.executiongraph.ExecutionVertex;
-import org.apache.flink.runtime.instance.InstanceConnectionInfo;
+import org.apache.flink.runtime.taskmanager.TaskManagerLocation;
 import org.apache.flink.runtime.webmonitor.ExecutionGraphHolder;
 
 import java.io.StringWriter;
@@ -33,7 +33,7 @@ import java.util.Map;
  * Request handler that returns the state transition timestamps for all subtasks, plus their
  * location and duration.
  */
-public class SubtasksTimesHandler extends AbstractJobVertexRequestHandler implements RequestHandler.JsonResponse {
+public class SubtasksTimesHandler extends AbstractJobVertexRequestHandler {
 
 	
 	public SubtasksTimesHandler(ExecutionGraphHolder executionGraphHolder) {
@@ -45,7 +45,7 @@ public class SubtasksTimesHandler extends AbstractJobVertexRequestHandler implem
 		final long now = System.currentTimeMillis();
 
 		StringWriter writer = new StringWriter();
-		JsonGenerator gen = JsonFactory.jacksonFactory.createJsonGenerator(writer);
+		JsonGenerator gen = JsonFactory.jacksonFactory.createGenerator(writer);
 
 		gen.writeStartObject();
 
@@ -70,7 +70,7 @@ public class SubtasksTimesHandler extends AbstractJobVertexRequestHandler implem
 			gen.writeStartObject();
 			gen.writeNumberField("subtask", num++);
 
-			InstanceConnectionInfo location = vertex.getCurrentAssignedResourceLocation();
+			TaskManagerLocation location = vertex.getCurrentAssignedResourceLocation();
 			String locationString = location == null ? "(unassigned)" : location.getHostname();
 			gen.writeStringField("host", locationString);
 

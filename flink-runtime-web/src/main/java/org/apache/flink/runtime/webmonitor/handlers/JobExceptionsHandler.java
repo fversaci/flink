@@ -21,7 +21,7 @@ package org.apache.flink.runtime.webmonitor.handlers;
 import com.fasterxml.jackson.core.JsonGenerator;
 import org.apache.flink.runtime.executiongraph.ExecutionGraph;
 import org.apache.flink.runtime.executiongraph.ExecutionVertex;
-import org.apache.flink.runtime.instance.InstanceConnectionInfo;
+import org.apache.flink.runtime.taskmanager.TaskManagerLocation;
 import org.apache.flink.runtime.webmonitor.ExecutionGraphHolder;
 import org.apache.flink.util.ExceptionUtils;
 
@@ -31,7 +31,7 @@ import java.util.Map;
 /**
  * Request handler that returns the configuration of a job.
  */
-public class JobExceptionsHandler extends AbstractExecutionGraphRequestHandler implements RequestHandler.JsonResponse {
+public class JobExceptionsHandler extends AbstractExecutionGraphRequestHandler {
 
 	private static final int MAX_NUMBER_EXCEPTION_TO_REPORT = 20;
 	
@@ -42,7 +42,7 @@ public class JobExceptionsHandler extends AbstractExecutionGraphRequestHandler i
 	@Override
 	public String handleRequest(ExecutionGraph graph, Map<String, String> params) throws Exception {
 		StringWriter writer = new StringWriter();
-		JsonGenerator gen = JsonFactory.jacksonFactory.createJsonGenerator(writer);
+		JsonGenerator gen = JsonFactory.jacksonFactory.createGenerator(writer);
 
 		gen.writeStartObject();
 		
@@ -66,7 +66,7 @@ public class JobExceptionsHandler extends AbstractExecutionGraphRequestHandler i
 					break;
 				}
 
-				InstanceConnectionInfo location = task.getCurrentAssignedResourceLocation();
+				TaskManagerLocation location = task.getCurrentAssignedResourceLocation();
 				String locationString = location != null ?
 						location.getFQDNHostname() + ':' + location.dataPort() : "(unassigned)";
 
@@ -75,6 +75,7 @@ public class JobExceptionsHandler extends AbstractExecutionGraphRequestHandler i
 				gen.writeStringField("task", task.getSimpleName());
 				gen.writeStringField("location", locationString);
 				gen.writeEndObject();
+				numExceptionsSoFar++;
 			}
 		}
 		gen.writeEndArray();

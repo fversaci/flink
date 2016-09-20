@@ -31,10 +31,9 @@ import org.apache.flink.runtime.io.network.api.reader.MutableReader;
 import org.apache.flink.runtime.operators.BatchTask;
 import org.apache.flink.runtime.operators.util.ReaderIterator;
 import org.apache.flink.runtime.plugable.DeserializationDelegate;
+import org.apache.flink.util.Preconditions;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-
-import com.google.common.base.Preconditions;
 
 /**
  * @param <T> The type of the elements in the broadcasted data set.
@@ -84,10 +83,8 @@ public class BroadcastVariableMaterialization<T, C> {
 			// sanity check
 			if (!references.add(referenceHolder)) {
 				throw new IllegalStateException(
-						String.format("The task %s (%d/%d) already holds a reference to the broadcast variable %s.",
-								referenceHolder.getEnvironment().getTaskName(),
-								referenceHolder.getEnvironment().getIndexInSubtaskGroup() + 1,
-								referenceHolder.getEnvironment().getNumberOfSubtasks(),
+						String.format("The task %s already holds a reference to the broadcast variable %s.",
+								referenceHolder.getEnvironment().getTaskInfo().getTaskNameWithSubtasks(),
 								key.toString()));
 			}
 			
@@ -177,10 +174,8 @@ public class BroadcastVariableMaterialization<T, C> {
 			if (!references.remove(referenceHolder)) {
 				if (errorIfNoReference) {
 					throw new IllegalStateException(
-							String.format("The task %s (%d/%d) did not hold a reference to the broadcast variable %s.",
-									referenceHolder.getEnvironment().getTaskName(),
-									referenceHolder.getEnvironment().getIndexInSubtaskGroup() + 1,
-									referenceHolder.getEnvironment().getNumberOfSubtasks(),
+							String.format("The task %s did not hold a reference to the broadcast variable %s.",
+									referenceHolder.getEnvironment().getTaskInfo().getTaskNameWithSubtasks(),
 									key.toString()));
 				} else {
 					return false;

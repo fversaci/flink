@@ -18,14 +18,16 @@
 
 package org.apache.flink.runtime.executiongraph
 
-import org.apache.flink.api.common.JobID
+import org.apache.flink.api.common.{ExecutionConfig, JobID}
 import org.apache.flink.configuration.Configuration
 import org.apache.flink.runtime.akka.AkkaUtils
 import org.apache.flink.runtime.executiongraph.ExecutionGraphTestUtils.SimpleActorGateway
-import org.apache.flink.runtime.jobgraph.{JobStatus, JobGraph, JobVertex}
+import org.apache.flink.runtime.executiongraph.restart.NoRestartStrategy
+import org.apache.flink.runtime.jobgraph.{JobGraph, JobStatus, JobVertex}
 import org.apache.flink.runtime.jobmanager.Tasks
 import org.apache.flink.runtime.jobmanager.scheduler.Scheduler
 import org.apache.flink.runtime.testingUtils.TestingUtils
+import org.apache.flink.util.SerializedValue
 import org.junit.runner.RunWith
 import org.scalatest.junit.JUnitRunner
 import org.scalatest.{Matchers, WordSpecLike}
@@ -56,8 +58,10 @@ class TaskManagerLossFailsTasksTest extends WordSpecLike with Matchers {
           new JobID(),
           "test job",
           new Configuration(),
-          AkkaUtils.getDefaultTimeout)
-        eg.setNumberOfRetriesLeft(0)
+          new SerializedValue(new ExecutionConfig()),
+          AkkaUtils.getDefaultTimeout,
+          new NoRestartStrategy())
+
         eg.attachJobGraph(jobGraph.getVerticesSortedTopologicallyFromSources)
 
         eg.getState should equal(JobStatus.CREATED)

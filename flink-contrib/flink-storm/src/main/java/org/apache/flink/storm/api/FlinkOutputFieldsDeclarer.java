@@ -20,7 +20,6 @@ package org.apache.flink.storm.api;
 import backtype.storm.topology.OutputFieldsDeclarer;
 import backtype.storm.tuple.Fields;
 import backtype.storm.utils.Utils;
-
 import org.apache.flink.api.common.typeinfo.TypeInformation;
 import org.apache.flink.api.java.tuple.Tuple;
 import org.apache.flink.api.java.typeutils.TypeExtractor;
@@ -105,20 +104,20 @@ final class FlinkOutputFieldsDeclarer implements OutputFieldsDeclarer {
 		Tuple t;
 		final int numberOfAttributes = outputSchema.size();
 
-		if (numberOfAttributes <= 25) {
+		if (numberOfAttributes <= 24) {
 			try {
-				t = Tuple.getTupleClass(numberOfAttributes).newInstance();
+				t = Tuple.getTupleClass(numberOfAttributes + 1).newInstance();
 			} catch (final InstantiationException e) {
 				throw new RuntimeException(e);
 			} catch (final IllegalAccessException e) {
 				throw new RuntimeException(e);
 			}
 		} else {
-			throw new IllegalArgumentException("Flink supports only a maximum number of 25 attributes");
+			throw new IllegalArgumentException("Flink supports only a maximum number of 24 attributes");
 		}
 
 		// TODO: declare only key fields as DefaultComparable
-		for (int i = 0; i < numberOfAttributes; ++i) {
+		for (int i = 0; i < numberOfAttributes + 1; ++i) {
 			t.setField(new DefaultComparable(), i);
 		}
 

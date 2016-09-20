@@ -26,7 +26,7 @@ import org.apache.flink.runtime.accumulators.AccumulatorRegistry;
 import org.apache.flink.runtime.execution.ExecutionState;
 import org.apache.flink.runtime.executiongraph.ExecutionJobVertex;
 import org.apache.flink.runtime.executiongraph.ExecutionVertex;
-import org.apache.flink.runtime.instance.InstanceConnectionInfo;
+import org.apache.flink.runtime.taskmanager.TaskManagerLocation;
 import org.apache.flink.runtime.webmonitor.ExecutionGraphHolder;
 
 import java.io.StringWriter;
@@ -36,7 +36,7 @@ import java.util.Map;
  * A request handler that provides the details of a job vertex, including id, name, parallelism,
  * and the runtime and metrics of all its subtasks.
  */
-public class JobVertexDetailsHandler extends AbstractJobVertexRequestHandler implements RequestHandler.JsonResponse {
+public class JobVertexDetailsHandler extends AbstractJobVertexRequestHandler {
 	
 	public JobVertexDetailsHandler(ExecutionGraphHolder executionGraphHolder) {
 		super(executionGraphHolder);
@@ -47,7 +47,7 @@ public class JobVertexDetailsHandler extends AbstractJobVertexRequestHandler imp
 		final long now = System.currentTimeMillis();
 		
 		StringWriter writer = new StringWriter();
-		JsonGenerator gen = JsonFactory.jacksonFactory.createJsonGenerator(writer);
+		JsonGenerator gen = JsonFactory.jacksonFactory.createGenerator(writer);
 
 		gen.writeStartObject();
 
@@ -61,8 +61,8 @@ public class JobVertexDetailsHandler extends AbstractJobVertexRequestHandler imp
 		for (ExecutionVertex vertex : jobVertex.getTaskVertices()) {
 			final ExecutionState status = vertex.getExecutionState();
 			
-			InstanceConnectionInfo location = vertex.getCurrentAssignedResourceLocation();
-			String locationString = location == null ? "(unassigned)" : location.getHostname();
+			TaskManagerLocation location = vertex.getCurrentAssignedResourceLocation();
+			String locationString = location == null ? "(unassigned)" : location.getHostname() + ":" + location.dataPort();
 
 			long startTime = vertex.getStateTimestamp(ExecutionState.DEPLOYING);
 			if (startTime == 0) {

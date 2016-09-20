@@ -20,25 +20,30 @@ package org.apache.flink.streaming.api.graph;
 import java.io.IOException;
 import java.io.Serializable;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
+import org.apache.flink.annotation.Internal;
 import org.apache.flink.api.common.typeutils.TypeSerializer;
 import org.apache.flink.api.java.functions.KeySelector;
 import org.apache.flink.configuration.Configuration;
+import org.apache.flink.runtime.operators.util.CorruptConfigurationException;
 import org.apache.flink.runtime.util.ClassLoaderUtil;
 import org.apache.flink.streaming.api.CheckpointingMode;
-import org.apache.flink.streaming.api.collector.selector.OutputSelectorWrapper;
+import org.apache.flink.streaming.api.TimeCharacteristic;
+import org.apache.flink.streaming.api.collector.selector.OutputSelector;
 import org.apache.flink.streaming.api.operators.StreamOperator;
-import org.apache.flink.runtime.state.StateBackend;
+import org.apache.flink.runtime.state.AbstractStateBackend;
 import org.apache.flink.streaming.runtime.tasks.StreamTaskException;
 import org.apache.flink.util.InstantiationUtil;
 
+@Internal
 public class StreamConfig implements Serializable {
 
 	private static final long serialVersionUID = 1L;
-
+	
 	// ------------------------------------------------------------------------
 	//  Config Keys
 	// ------------------------------------------------------------------------
@@ -48,6 +53,7 @@ public class StreamConfig implements Serializable {
 	private static final String CHAINED_OUTPUTS = "chainedOutputs";
 	private static final String CHAINED_TASK_CONFIG = "chainedTaskConfig_";
 	private static final String IS_CHAINED_VERTEX = "isChainedSubtask";
+	private static final String CHAIN_INDEX = "chainIndex";
 	private static final String VERTEX_NAME = "vertexID";
 	private static final String ITERATION_ID = "iterationId";
 	private static final String OUTPUT_SELECTOR_WRAPPER = "outputSelectorWrapper";
@@ -68,8 +74,12 @@ public class StreamConfig implements Serializable {
 	
 	private static final String STATE_BACKEND = "statebackend";
 	private static final String STATE_PARTITIONER = "statePartitioner";
+
+	private static final String NUMBER_OF_KEY_GROUPS = "numberOfKeyGroups";
+
 	private static final String STATE_KEY_SERIALIZER = "statekeyser";
 	
+	private static final String TIME_CHARACTERISTIC = "timechar";
 	
 	// ------------------------------------------------------------------------
 	//  Default Values
@@ -103,6 +113,19 @@ public class StreamConfig implements Serializable {
 
 	public Integer getVertexID() {
 		return config.getInteger(VERTEX_NAME, -1);
+	}
+	
+	public void setTimeCharacteristic(TimeCharacteristic characteristic) {
+		config.setInteger(TIME_CHARACTERISTIC, characteristic.ordinal());
+	}
+
+	public TimeCharacteristic getTimeCharacteristic() {
+		int ordinal = config.getInteger(TIME_CHARACTERISTIC, -1);
+		if (ordinal >= 0) {
+			return TimeCharacteristic.values()[ordinal];
+		} else {
+			throw new CorruptConfigurationException("time characteristic is not set");
+		}
 	}
 	
 	public void setTypeSerializerIn1(TypeSerializer<?> serializer) {
@@ -191,19 +214,22 @@ public class StreamConfig implements Serializable {
 		}
 	}
 
-	public void setOutputSelectorWrapper(OutputSelectorWrapper<?> outputSelectorWrapper) {
+	public void setOutputSelectors(List<OutputSelector<?>> outputSelectors) {
 		try {
-			InstantiationUtil.writeObjectToConfig(outputSelectorWrapper, this.config, OUTPUT_SELECTOR_WRAPPER);
+			InstantiationUtil.writeObjectToConfig(outputSelectors, this.config, OUTPUT_SELECTOR_WRAPPER);
 		} catch (IOException e) {
-			throw new StreamTaskException("Cannot serialize OutputSelectorWrapper.", e);
+			throw new StreamTaskException("Could not serialize output selectors", e);
 		}
 	}
 	
-	public <T> OutputSelectorWrapper<T> getOutputSelectorWrapper(ClassLoader cl) {
+	public <T> List<OutputSelector<T>> getOutputSelectors(ClassLoader userCodeClassloader) {
 		try {
-			return InstantiationUtil.readObjectFromConfig(this.config, OUTPUT_SELECTOR_WRAPPER, cl);
+			List<OutputSelector<T>> selectors = 
+					InstantiationUtil.readObjectFromConfig(this.config, OUTPUT_SELECTOR_WRAPPER, userCodeClassloader);
+			return selectors == null ? Collections.<OutputSelector<T>>emptyList() : selectors;
+			
 		} catch (Exception e) {
-			throw new StreamTaskException("Cannot deserialize and instantiate OutputSelectorWrapper.", e);
+			throw new StreamTaskException("Could not read output selectors", e);
 		}
 	}
 
@@ -365,40 +391,80 @@ public class StreamConfig implements Serializable {
 			throw new StreamTaskException("Could not instantiate configuration.", e);
 		}
 	}
+
+	public void setChainIndex(int index) {
+		this.config.setInteger(CHAIN_INDEX, index);
+	}
+
+	public int getChainIndex() {
+		return this.config.getInteger(CHAIN_INDEX, 0);
+	}
 	
 	// ------------------------------------------------------------------------
 	//  State backend
 	// ------------------------------------------------------------------------
 	
-	public void setStateBackend(StateBackend<?> backend) {
-		try {
-			InstantiationUtil.writeObjectToConfig(backend, this.config, STATE_BACKEND);
-		} catch (Exception e) {
-			throw new StreamTaskException("Could not serialize stateHandle provider.", e);
+	public void setStateBackend(AbstractStateBackend backend) {
+		if (backend != null) {
+			try {
+				InstantiationUtil.writeObjectToConfig(backend, this.config, STATE_BACKEND);
+			} catch (Exception e) {
+				throw new StreamTaskException("Could not serialize stateHandle provider.", e);
+			}
 		}
 	}
 	
-	public StateBackend<?> getStateBackend(ClassLoader cl) {
+	public AbstractStateBackend getStateBackend(ClassLoader cl) {
 		try {
 			return InstantiationUtil.readObjectFromConfig(this.config, STATE_BACKEND, cl);
 		} catch (Exception e) {
 			throw new StreamTaskException("Could not instantiate statehandle provider.", e);
 		}
 	}
+
+	public byte[] getSerializedStateBackend() {
+		return this.config.getBytes(STATE_BACKEND, null);
+	}
 	
-	public void setStatePartitioner(KeySelector<?, ?> partitioner) {
+	public void setStatePartitioner(int input, KeySelector<?, ?> partitioner) {
 		try {
-			InstantiationUtil.writeObjectToConfig(partitioner, this.config, STATE_PARTITIONER);
+			InstantiationUtil.writeObjectToConfig(partitioner, this.config, STATE_PARTITIONER + input);
 		} catch (IOException e) {
 			throw new StreamTaskException("Could not serialize state partitioner.", e);
 		}
 	}
 	
-	public KeySelector<?, Serializable> getStatePartitioner(ClassLoader cl) {
+	public KeySelector<?, Serializable> getStatePartitioner(int input, ClassLoader cl) {
 		try {
-			return InstantiationUtil.readObjectFromConfig(this.config, STATE_PARTITIONER, cl);
+			return InstantiationUtil.readObjectFromConfig(this.config, STATE_PARTITIONER + input, cl);
 		} catch (Exception e) {
 			throw new StreamTaskException("Could not instantiate state partitioner.", e);
+		}
+	}
+
+	/**
+	 * Sets the number of key-groups to be used for the current {@link StreamOperator}.
+	 *
+	 * @param numberOfKeyGroups Number of key-groups to be used
+	 */
+	public void setNumberOfKeyGroups(int numberOfKeyGroups) {
+		try {
+			InstantiationUtil.writeObjectToConfig(numberOfKeyGroups, this.config, NUMBER_OF_KEY_GROUPS);
+		} catch (Exception e) {
+			throw new StreamTaskException("Could not serialize virtual state partitioner.", e);
+		}
+	}
+
+	/**
+	 * Gets the number of key-groups for the {@link StreamOperator}.
+	 *
+	 * @return the number of key-groups
+	 */
+	public Integer getNumberOfKeyGroups(ClassLoader cl) {
+		try {
+			return InstantiationUtil.readObjectFromConfig(this.config, NUMBER_OF_KEY_GROUPS, cl);
+		} catch (Exception e) {
+			throw new StreamTaskException("Could not instantiate virtual state partitioner.", e);
 		}
 	}
 	
@@ -417,6 +483,8 @@ public class StreamConfig implements Serializable {
 			throw new StreamTaskException("Could not instantiate state key serializer from task config.", e);
 		}
 	}
+
+
 	
 	// ------------------------------------------------------------------------
 	//  Miscellansous

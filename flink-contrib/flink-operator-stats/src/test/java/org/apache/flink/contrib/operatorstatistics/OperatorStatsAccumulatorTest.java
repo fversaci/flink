@@ -25,11 +25,12 @@ import org.apache.flink.api.java.ExecutionEnvironment;
 import org.apache.flink.api.java.io.DiscardingOutputFormat;
 import org.apache.flink.api.java.tuple.Tuple1;
 import org.apache.flink.configuration.Configuration;
-import org.apache.flink.runtime.StreamingMode;
 import org.apache.flink.test.util.AbstractTestBase;
 import org.apache.flink.util.Collector;
+
 import org.junit.Assert;
 import org.junit.Test;
+
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -44,8 +45,8 @@ public class OperatorStatsAccumulatorTest extends AbstractTestBase {
 
 	private static final String ACCUMULATOR_NAME = "op-stats";
 
-	public OperatorStatsAccumulatorTest(){
-		super(new Configuration(), StreamingMode.BATCH_ONLY);
+	public OperatorStatsAccumulatorTest() {
+		super(new Configuration());
 	}
 	
 	public static class StringToInt extends RichFlatMapFunction<String, Tuple1<Integer>> {

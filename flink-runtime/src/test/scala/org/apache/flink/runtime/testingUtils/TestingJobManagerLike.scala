@@ -18,7 +18,7 @@
 
 package org.apache.flink.runtime.testingUtils
 
-import akka.actor.{Terminated, Cancellable, ActorRef}
+import akka.actor.{ActorRef, Cancellable, Terminated}
 import akka.pattern.{ask, pipe}
 import org.apache.flink.api.common.JobID
 import org.apache.flink.runtime.FlinkActor
@@ -26,27 +26,26 @@ import org.apache.flink.runtime.execution.ExecutionState
 import org.apache.flink.runtime.jobgraph.JobStatus
 import org.apache.flink.runtime.jobmanager.JobManager
 import org.apache.flink.runtime.messages.ExecutionGraphMessages.JobStatusChanged
-import org.apache.flink.runtime.messages.JobManagerMessages.GrantLeadership
+import org.apache.flink.runtime.messages.JobManagerMessages.{GrantLeadership, RegisterJobClient, RequestClassloadingProps}
 import org.apache.flink.runtime.messages.Messages.{Acknowledge, Disconnect}
 import org.apache.flink.runtime.messages.RegistrationMessages.RegisterTaskManager
 import org.apache.flink.runtime.messages.TaskManagerMessages.Heartbeat
 import org.apache.flink.runtime.testingUtils.TestingJobManagerMessages._
-import org.apache.flink.runtime.testingUtils.TestingMessages.{DisableDisconnect,
-CheckIfJobRemoved, Alive}
+import org.apache.flink.runtime.testingUtils.TestingMessages._
 import org.apache.flink.runtime.testingUtils.TestingTaskManagerMessages.AccumulatorsChanged
 
 import scala.collection.mutable
 import scala.concurrent.Future
 import scala.concurrent.duration._
-
-import language.postfixOps
+import scala.language.postfixOps
 
 /** This mixin can be used to decorate a JobManager with messages for testing purpose.  */
 trait TestingJobManagerLike extends FlinkActor {
   that: JobManager =>
 
-  import scala.collection.JavaConverters._
   import context._
+
+  import scala.collection.JavaConverters._
 
   val waitForAllVerticesToBeRunning = scala.collection.mutable.HashMap[JobID, Set[ActorRef]]()
   val waitForTaskManagerToBeTerminated = scala.collection.mutable.HashMap[String, Set[ActorRef]]()
@@ -67,6 +66,10 @@ trait TestingJobManagerLike extends FlinkActor {
     new Ordering[(Int, ActorRef)] {
       override def compare(x: (Int, ActorRef), y: (Int, ActorRef)): Int = y._1 - x._1
     })
+
+  val waitForClient = scala.collection.mutable.HashSet[ActorRef]()
+
+  val waitForShutdown = scala.collection.mutable.HashSet[ActorRef]()
 
   var disconnectDisabled = false
 
@@ -189,6 +192,10 @@ trait TestingJobManagerLike extends FlinkActor {
         }
       }
 
+    // see shutdown method for reply
+    case NotifyOfComponentShutdown =>
+      waitForShutdown += sender()
+
     case NotifyWhenAccumulatorChange(jobID) =>
 
       val (updated, registered) = waitForAccumulatorUpdate.
@@ -221,7 +228,7 @@ trait TestingJobManagerLike extends FlinkActor {
               val flinkAccumulators = graph.getFlinkAccumulators
               val userAccumulators = graph.aggregateUserAccumulators
               actors foreach {
-                actor => actor ! UpdatedAccumulators(jobID, flinkAccumulators, userAccumulators)
+                 actor => actor ! UpdatedAccumulators(jobID, flinkAccumulators, userAccumulators)
               }
             case None =>
           }
@@ -242,7 +249,7 @@ trait TestingJobManagerLike extends FlinkActor {
             } else {
               sender ! decorateMessage(
                 WorkingTaskManager(
-                  Some(resource.getInstance().getActorGateway)
+                  Some(resource.getTaskManagerActorGateway())
                 )
               )
             }
@@ -285,6 +292,16 @@ trait TestingJobManagerLike extends FlinkActor {
     case DisablePostStop =>
       postStopEnabled = false
 
+    case RequestSavepoint(savepointPath) =>
+      try {
+        val savepoint = savepointStore.loadSavepoint(savepointPath)
+        sender ! ResponseSavepoint(savepoint)
+      }
+      catch {
+        case e: Exception =>
+          sender ! ResponseSavepoint(null)
+      }
+
     case msg: Disconnect =>
       if (!disconnectDisabled) {
         super.handleMessage(msg)
@@ -313,6 +330,17 @@ trait TestingJobManagerLike extends FlinkActor {
 
       waitForLeader.clear()
 
+    case NotifyWhenClientConnects =>
+      waitForClient += sender()
+      sender() ! true
+
+    case msg: RegisterJobClient =>
+      super.handleMessage(msg)
+      waitForClient.foreach(_ ! ClientConnected)
+    case msg: RequestClassloadingProps =>
+      super.handleMessage(msg)
+      waitForClient.foreach(_ ! ClassLoadingPropsDelivered)
+
     case NotifyWhenAtLeastNumTaskManagerAreRegistered(numRegisteredTaskManager) =>
       if (that.instanceManager.getNumberOfRegisteredTaskManagers >= numRegisteredTaskManager) {
         // there are already at least numRegisteredTaskManager registered --> send Acknowledge
@@ -322,10 +350,11 @@ trait TestingJobManagerLike extends FlinkActor {
         waitForNumRegisteredTaskManagers += ((numRegisteredTaskManager, sender()))
       }
 
-    case msg:RegisterTaskManager =>
+    // TaskManager may be registered on these two messages
+    case msg @ (_: RegisterTaskManager) =>
       super.handleMessage(msg)
 
-      // dequeue all senders which wait for instanceManager.getNumberOfRegisteredTaskManagers or
+      // dequeue all senders which wait for instanceManager.getNumberOfStartedTaskManagers or
       // fewer registered TaskManagers
       while (waitForNumRegisteredTaskManagers.nonEmpty &&
         waitForNumRegisteredTaskManagers.head._1 <=
@@ -375,5 +404,14 @@ trait TestingJobManagerLike extends FlinkActor {
         case _ =>
       }
     }
+  }
+
+  /**
+    * No killing of the VM for testing.
+    */
+  override protected def shutdown(): Unit = {
+    log.info("Shutting down TestingJobManager.")
+    waitForShutdown.foreach(_ ! ComponentShutdown(self))
+    waitForShutdown.clear()
   }
 }

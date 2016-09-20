@@ -25,7 +25,7 @@ import org.apache.flink.api.common.accumulators.LongCounter;
 import org.apache.flink.runtime.accumulators.AccumulatorRegistry;
 import org.apache.flink.runtime.execution.ExecutionState;
 import org.apache.flink.runtime.executiongraph.Execution;
-import org.apache.flink.runtime.instance.InstanceConnectionInfo;
+import org.apache.flink.runtime.taskmanager.TaskManagerLocation;
 import org.apache.flink.runtime.webmonitor.ExecutionGraphHolder;
 
 import java.io.StringWriter;
@@ -34,7 +34,7 @@ import java.util.Map;
 /**
  * Request handler providing details about a single task execution attempt.
  */
-public class SubtaskExecutionAttemptDetailsHandler extends AbstractSubtaskAttemptRequestHandler implements RequestHandler.JsonResponse {
+public class SubtaskExecutionAttemptDetailsHandler extends AbstractSubtaskAttemptRequestHandler {
 	
 	public SubtaskExecutionAttemptDetailsHandler(ExecutionGraphHolder executionGraphHolder) {
 		super(executionGraphHolder);
@@ -45,7 +45,7 @@ public class SubtaskExecutionAttemptDetailsHandler extends AbstractSubtaskAttemp
 		final ExecutionState status = execAttempt.getState();
 		final long now = System.currentTimeMillis();
 
-		InstanceConnectionInfo location = execAttempt.getAssignedResourceLocation();
+		TaskManagerLocation location = execAttempt.getAssignedResourceLocation();
 		String locationString = location == null ? "(unassigned)" : location.getHostname();
 
 		long startTime = execAttempt.getStateTimestamp(ExecutionState.DEPLOYING);
@@ -75,10 +75,10 @@ public class SubtaskExecutionAttemptDetailsHandler extends AbstractSubtaskAttemp
 		}
 
 		StringWriter writer = new StringWriter();
-		JsonGenerator gen = JsonFactory.jacksonFactory.createJsonGenerator(writer);
+		JsonGenerator gen = JsonFactory.jacksonFactory.createGenerator(writer);
 
 		gen.writeStartObject();
-		gen.writeNumberField("subtask", execAttempt.getVertex().getSubTaskIndex());
+		gen.writeNumberField("subtask", execAttempt.getVertex().getParallelSubtaskIndex());
 		gen.writeStringField("status", status.name());
 		gen.writeNumberField("attempt", execAttempt.getAttemptNumber());
 		gen.writeStringField("host", locationString);

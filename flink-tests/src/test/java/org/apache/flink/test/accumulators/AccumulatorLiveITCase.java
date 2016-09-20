@@ -173,7 +173,7 @@ public class AccumulatorLiveITCase {
 		DataStream<String> input = env.fromCollection(inputData);
 		input
 				.flatMap(new NotifyingMapper())
-				.write(new NotifyingOutputFormat(), 1000).disableChaining();
+				.writeUsingOutputFormat(new NotifyingOutputFormat()).disableChaining();
 
 
 		jobGraph = env.getStreamGraph().getJobGraph();
@@ -233,7 +233,6 @@ public class AccumulatorLiveITCase {
 			} else {
 				fail("Wrong accumulator results when map task begins execution.");
 			}
-
 
 			int expectedAccVal = 0;
 

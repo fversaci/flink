@@ -17,11 +17,13 @@
  */
 package org.apache.flink.api.java.utils;
 
-import com.google.common.base.Preconditions;
 import org.apache.commons.cli.Option;
 import org.apache.commons.lang3.math.NumberUtils;
+import org.apache.flink.annotation.PublicEvolving;
+import org.apache.flink.annotation.Public;
 import org.apache.flink.api.common.ExecutionConfig;
 import org.apache.flink.configuration.Configuration;
+import org.apache.flink.util.Preconditions;
 import org.apache.hadoop.util.GenericOptionsParser;
 
 import java.io.File;
@@ -29,6 +31,7 @@ import java.io.FileInputStream;
 import java.io.FileNotFoundException;
 import java.io.FileOutputStream;
 import java.io.IOException;
+import java.io.OutputStream;
 import java.io.Serializable;
 import java.util.Arrays;
 import java.util.HashMap;
@@ -38,6 +41,7 @@ import java.util.Properties;
 /**
  * This class provides simple utility methods for reading and parsing program arguments from different sources
  */
+@Public
 public class ParameterTool extends ExecutionConfig.GlobalJobParameters implements Serializable, Cloneable {
 	private static final long serialVersionUID = 1L;
 
@@ -149,12 +153,12 @@ public class ParameterTool extends ExecutionConfig.GlobalJobParameters implement
 	public static ParameterTool fromPropertiesFile(String path) throws IOException {
 		File propertiesFile = new File(path);
 		if(!propertiesFile.exists()) {
-			throw new FileNotFoundException("Properties file "+path+" does not exist");
+			throw new FileNotFoundException("Properties file " + propertiesFile.getAbsolutePath() + " does not exist");
 		}
 		Properties props = new Properties();
-		FileInputStream fis = new FileInputStream(propertiesFile);
-		props.load(fis);
-		fis.close();
+		try (FileInputStream fis = new FileInputStream(propertiesFile)) {
+			props.load(fis);
+		}
 		return fromMap((Map)props);
 	}
 
@@ -188,6 +192,7 @@ public class ParameterTool extends ExecutionConfig.GlobalJobParameters implement
 	 * @throws IOException If arguments cannot be parsed by {@link GenericOptionsParser}
 	 * @see GenericOptionsParser
 	 */
+	@PublicEvolving
 	public static ParameterTool fromGenericOptionsParser(String[] args) throws IOException {
 		Option[] options = new GenericOptionsParser(args).getCommandLine().getOptions();
 		Map<String, String> map = new HashMap<String, String>();
@@ -519,7 +524,9 @@ public class ParameterTool extends ExecutionConfig.GlobalJobParameters implement
 		}
 		Properties defaultProps = new Properties();
 		defaultProps.putAll(this.defaultData);
-		defaultProps.store(new FileOutputStream(file), "Default file created by Flink's ParameterUtil.createPropertiesFile()");
+		try (final OutputStream out = new FileOutputStream(file)) {
+			defaultProps.store(out, "Default file created by Flink's ParameterUtil.createPropertiesFile()");
+		}
 	}
 
 	@Override

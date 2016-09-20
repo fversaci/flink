@@ -19,9 +19,12 @@
 
 package org.apache.flink.types.parser;
 
+import org.apache.flink.annotation.PublicEvolving;
+
 /**
  * Parses a text field into a {@link Float}.
  */
+@PublicEvolving
 public class FloatParser extends FieldParser<Float> {
 
 	private float result;
@@ -36,6 +39,10 @@ public class FloatParser extends FieldParser<Float> {
 
 		while (i < limit) {
 			if (i < delimLimit && delimiterNext(bytes, i, delimiter)) {
+				if (i == startPos) {
+					setErrorState(ParseErrorState.EMPTY_COLUMN);
+					return -1;
+				}
 				break;
 			}
 			i++;

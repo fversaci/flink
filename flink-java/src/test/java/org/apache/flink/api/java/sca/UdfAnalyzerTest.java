@@ -35,7 +35,7 @@ import org.apache.flink.api.java.functions.FunctionAnnotation.ForwardedFields;
 import org.apache.flink.api.java.functions.FunctionAnnotation.ForwardedFieldsFirst;
 import org.apache.flink.api.java.functions.FunctionAnnotation.ForwardedFieldsSecond;
 import org.apache.flink.api.java.functions.SemanticPropUtil;
-import org.apache.flink.api.java.operators.Keys;
+import org.apache.flink.api.common.operators.Keys;
 import org.apache.flink.api.java.tuple.Tuple1;
 import org.apache.flink.api.java.tuple.Tuple2;
 import org.apache.flink.api.java.tuple.Tuple3;
@@ -366,7 +366,6 @@ public class UdfAnalyzerTest {
 
 	@Test
 	public void testForwardWithGetMethod() {
-		System.out.println("HERE");
 		compareAnalyzerResultWithAnnotationsSingleInput(MapFunction.class, Map20.class,
 				"Tuple4<Integer, Integer, Integer, Integer>", "Tuple4<Integer, Integer, Integer, Integer>");
 	}
@@ -1102,7 +1101,7 @@ public class UdfAnalyzerTest {
 	public static class Reduce2 implements ReduceFunction<MyPojo> {
 		@Override
 		public MyPojo reduce(MyPojo value1, MyPojo value2) throws Exception {
-			if (value1.field == "") {
+			if (value1.field != null && value1.field.isEmpty()) {
 				return value2;
 			}
 			return value1;

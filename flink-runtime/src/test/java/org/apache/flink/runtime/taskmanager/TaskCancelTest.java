@@ -40,15 +40,17 @@ import org.apache.flink.runtime.testingUtils.TestingCluster;
 import org.apache.flink.runtime.testingUtils.TestingUtils;
 import org.apache.flink.runtime.testutils.JobManagerActorTestUtils;
 import org.apache.flink.types.IntValue;
+
 import org.junit.Test;
+
 import scala.concurrent.Await;
 import scala.concurrent.Future;
 import scala.concurrent.duration.FiniteDuration;
 
-import static com.google.common.base.Preconditions.checkNotNull;
 import static org.apache.flink.runtime.messages.JobManagerMessages.CancelJob;
 import static org.apache.flink.runtime.messages.JobManagerMessages.CancellationFailure;
 import static org.apache.flink.runtime.messages.JobManagerMessages.RequestJobStatus;
+import static org.apache.flink.util.Preconditions.checkNotNull;
 
 public class TaskCancelTest {
 
@@ -199,7 +201,7 @@ public class TaskCancelTest {
 				if (status.status() == JobStatus.RUNNING) {
 					return;
 				}
-				else if (status.status().isTerminalState()) {
+				else if (status.status().isGloballyTerminalState()) {
 					throw new Exception("JobStatus changed to " + status.status()
 							+ " while waiting for job to start running.");
 				}
@@ -219,43 +221,38 @@ public class TaskCancelTest {
 
 	public static class InfiniteSource extends AbstractInvokable {
 
-		private RecordWriter<IntValue> writer;
-
-		@Override
-		public void registerInputOutput() {
-			writer = new RecordWriter<IntValue>(getEnvironment().getWriter(0));
-		}
-
 		@Override
 		public void invoke() throws Exception {
+			RecordWriter<IntValue> writer = new RecordWriter<>(getEnvironment().getWriter(0));
+
 			final IntValue val = new IntValue();
 
-			for (int i = 0; true; i++) {
-				if (Thread.interrupted()) {
-					return;
-				}
+			try {
+				for (int i = 0; true; i++) {
+					if (Thread.interrupted()) {
+						return;
+					}
 
-				val.setValue(i);
-				writer.emit(val);
+					val.setValue(i);
+					writer.emit(val);
+				}
+			}
+			finally {
+				writer.clearBuffers();
 			}
 		}
 	}
 
 	public static class AgnosticUnion extends AbstractInvokable {
 
-		private RecordReader<IntValue> reader;
-
-		@Override
-		public void registerInputOutput() {
-			UnionInputGate union = new UnionInputGate(getEnvironment().getAllInputGates());
-
-			reader = new RecordReader<IntValue>(union, IntValue.class);
-		}
-
 		@Override
 		public void invoke() throws Exception {
-			while (reader.next() != null) {
-			}
+			UnionInputGate union = new UnionInputGate(getEnvironment().getAllInputGates());
+			RecordReader<IntValue> reader = new RecordReader<>(
+					union, IntValue.class, getEnvironment().getTaskManagerInfo().getTmpDirectories());
+
+			//noinspection StatementWithEmptyBody
+			while (reader.next() != null) {}
 		}
 	}
 }

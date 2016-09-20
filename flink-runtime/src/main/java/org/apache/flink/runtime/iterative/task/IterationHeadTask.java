@@ -171,7 +171,7 @@ public class IterationHeadTask<X, Y, S extends Function, OT> extends AbstractIte
 		boolean success = false;
 		try {
 			int numPages = getMemoryManager().computeNumberOfPages(hashjoinMemorySize);
-			memSegments = getMemoryManager().allocatePages(getOwningNepheleTask(), numPages);
+			memSegments = getMemoryManager().allocatePages(getContainingTask(), numPages);
 			hashTable = new CompactingHashTable<BT>(solutionTypeSerializer, solutionTypeComparator, memSegments);
 			success = true;
 			return hashTable;
@@ -231,7 +231,7 @@ public class IterationHeadTask<X, Y, S extends Function, OT> extends AbstractIte
 	@Override
 	public void run() throws Exception {
 		final String brokerKey = brokerKey();
-		final int workerIndex = getEnvironment().getIndexInSubtaskGroup();
+		final int workerIndex = getEnvironment().getTaskInfo().getIndexOfThisSubtask();
 		
 		final boolean objectSolutionSet = config.isSolutionSetUnmanaged();
 

@@ -29,16 +29,20 @@ import org.apache.flink.streaming.runtime.streamrecord.StreamRecord;
  * from user elements and assigning them as the internal timestamp of the {@link StreamRecord}.
  *
  * @param <T> The type of the input elements
+ * 
+ * @deprecated Subsumed by {@link TimestampsAndPeriodicWatermarksOperator} and
+ *             {@link TimestampsAndPunctuatedWatermarksOperator}.
  */
+@Deprecated
 public class ExtractTimestampsOperator<T>
 		extends AbstractUdfStreamOperator<T, TimestampExtractor<T>>
 		implements OneInputStreamOperator<T, T>, Triggerable {
 
 	private static final long serialVersionUID = 1L;
 
-	transient long watermarkInterval;
+	private transient long watermarkInterval;
 
-	transient long currentWatermark;
+	private transient long currentWatermark;
 
 	public ExtractTimestampsOperator(TimestampExtractor<T> extractor) {
 		super(extractor);
@@ -54,14 +58,6 @@ public class ExtractTimestampsOperator<T>
 		}
 
 		currentWatermark = Long.MIN_VALUE;
-	}
-
-	@Override
-	public void close() throws Exception {
-		super.close();
-
-		// emit a final +Inf watermark, just like the sources
-		output.emitWatermark(new Watermark(Long.MAX_VALUE));
 	}
 
 	@Override
@@ -90,6 +86,11 @@ public class ExtractTimestampsOperator<T>
 
 	@Override
 	public void processWatermark(Watermark mark) throws Exception {
-		// ignore them, since we are basically a watermark source
+		// if we receive a Long.MAX_VALUE watermark we forward it since it is used
+		// to signal the end of input and to not block watermark progress downstream
+		if (mark.getTimestamp() == Long.MAX_VALUE && mark.getTimestamp() > currentWatermark) {
+			currentWatermark = Long.MAX_VALUE;
+			output.emitWatermark(mark);
+		}
 	}
 }

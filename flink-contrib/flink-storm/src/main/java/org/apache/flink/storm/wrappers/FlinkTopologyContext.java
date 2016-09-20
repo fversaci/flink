@@ -27,12 +27,11 @@ import backtype.storm.metric.api.ReducedMetric;
 import backtype.storm.state.ISubscribedState;
 import backtype.storm.task.TopologyContext;
 import backtype.storm.tuple.Fields;
+import clojure.lang.Atom;
 
 import java.util.Collection;
 import java.util.List;
 import java.util.Map;
-
-import clojure.lang.Atom;
 
 /**
  * {@link FlinkTopologyContext} is a {@link TopologyContext} that overwrites certain method that are not applicable when
@@ -121,9 +120,8 @@ final class FlinkTopologyContext extends TopologyContext {
 	 * @throws UnsupportedOperationException
 	 * 		at every invocation
 	 */
-	@SuppressWarnings("unchecked")
 	@Override
-	public IMetric registerMetric(final String name, final IMetric metric, final int timeBucketSizeInSecs) {
+	public <T extends IMetric> T registerMetric(final String name, final T metric, final int timeBucketSizeInSecs) {
 		throw new UnsupportedOperationException("Metrics are not supported by Flink");
 	}
 

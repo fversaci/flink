@@ -27,19 +27,20 @@ import akka.testkit.JavaTestKit;
 import akka.util.Timeout;
 import org.apache.curator.framework.CuratorFramework;
 import org.apache.curator.test.TestingServer;
-import org.apache.flink.configuration.ConfigConstants;
 import org.apache.flink.configuration.Configuration;
-import org.apache.flink.runtime.StreamingMode;
 import org.apache.flink.runtime.akka.AkkaUtils;
 import org.apache.flink.runtime.blob.BlobServer;
 import org.apache.flink.runtime.checkpoint.CheckpointRecoveryFactory;
 import org.apache.flink.runtime.checkpoint.StandaloneCheckpointRecoveryFactory;
 import org.apache.flink.runtime.execution.librarycache.BlobLibraryCacheManager;
+import org.apache.flink.runtime.executiongraph.restart.NoRestartStrategy;
 import org.apache.flink.runtime.instance.InstanceManager;
-import org.apache.flink.runtime.jobmanager.RecoveryMode;
+import org.apache.flink.runtime.jobmanager.HighAvailabilityMode;
 import org.apache.flink.runtime.jobmanager.StandaloneSubmittedJobGraphStore;
 import org.apache.flink.runtime.jobmanager.SubmittedJobGraphStore;
 import org.apache.flink.runtime.jobmanager.scheduler.Scheduler;
+import org.apache.flink.runtime.checkpoint.savepoint.SavepointStore;
+import org.apache.flink.runtime.checkpoint.savepoint.SavepointStoreFactory;
 import org.apache.flink.runtime.testingUtils.TestingJobManager;
 import org.apache.flink.runtime.testingUtils.TestingJobManagerMessages;
 import org.apache.flink.runtime.testingUtils.TestingUtils;
@@ -51,10 +52,13 @@ import org.junit.BeforeClass;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
+import scala.Option;
 import scala.concurrent.Await;
 import scala.concurrent.Future;
 import scala.concurrent.duration.FiniteDuration;
+import scala.concurrent.forkjoin.ForkJoinPool;
 
+import java.util.concurrent.ExecutorService;
 import java.util.concurrent.TimeUnit;
 
 public class JobManagerLeaderElectionTest extends TestLogger {
@@ -64,14 +68,16 @@ public class JobManagerLeaderElectionTest extends TestLogger {
 
 	private static ActorSystem actorSystem;
 	private static TestingServer testingServer;
+	private static ExecutorService executor;
+	
 	private static Timeout timeout = new Timeout(TestingUtils.TESTING_DURATION());
 	private static FiniteDuration duration = new FiniteDuration(5, TimeUnit.MINUTES);
 
 	@BeforeClass
 	public static void setup() throws Exception {
 		actorSystem = ActorSystem.create("TestingActorSystem");
-
 		testingServer = new TestingServer();
+		executor = new ForkJoinPool();
 	}
 
 	@AfterClass
@@ -80,8 +86,12 @@ public class JobManagerLeaderElectionTest extends TestLogger {
 			JavaTestKit.shutdownActorSystem(actorSystem);
 		}
 
-		if(testingServer != null) {
+		if (testingServer != null) {
 			testingServer.stop();
+		}
+		
+		if (executor != null) {
+			executor.shutdownNow();
 		}
 	}
 
@@ -91,7 +101,7 @@ public class JobManagerLeaderElectionTest extends TestLogger {
 	@Test
 	public void testLeaderElection() throws Exception {
 		final Configuration configuration = ZooKeeperTestUtils
-			.createZooKeeperRecoveryModeConfig(
+			.createZooKeeperHAConfig(
 				testingServer.getConnectString(),
 				tempFolder.getRoot().getPath());
 
@@ -120,7 +130,7 @@ public class JobManagerLeaderElectionTest extends TestLogger {
 	@Test
 	public void testLeaderReelection() throws Exception {
 		final Configuration configuration = ZooKeeperTestUtils
-			.createZooKeeperRecoveryModeConfig(
+			.createZooKeeperHAConfig(
 				testingServer.getConnectString(),
 				tempFolder.getRoot().getPath());
 
@@ -161,7 +171,7 @@ public class JobManagerLeaderElectionTest extends TestLogger {
 
 	private Props createJobManagerProps(Configuration configuration) throws Exception {
 		LeaderElectionService leaderElectionService;
-		if (RecoveryMode.fromConfig(configuration) == RecoveryMode.STANDALONE) {
+		if (HighAvailabilityMode.fromConfig(configuration) == HighAvailabilityMode.NONE) {
 			leaderElectionService = new StandaloneLeaderElectionService();
 		}
 		else {
@@ -173,22 +183,24 @@ public class JobManagerLeaderElectionTest extends TestLogger {
 		// We don't need recovery in this test
 		SubmittedJobGraphStore submittedJobGraphStore = new StandaloneSubmittedJobGraphStore();
 		CheckpointRecoveryFactory checkpointRecoveryFactory = new StandaloneCheckpointRecoveryFactory();
+		SavepointStore savepointStore = SavepointStoreFactory.createFromConfig(configuration);
 
 		return Props.create(
 				TestingJobManager.class,
 				configuration,
-				TestingUtils.defaultExecutionContext(),
+				executor,
 				new InstanceManager(),
 				new Scheduler(TestingUtils.defaultExecutionContext()),
-				new BlobLibraryCacheManager(new BlobServer(configuration), 10l),
+				new BlobLibraryCacheManager(new BlobServer(configuration), 10L),
 				ActorRef.noSender(),
-				1,
-				1L,
+				new NoRestartStrategy.NoRestartStrategyFactory(),
 				AkkaUtils.getDefaultTimeout(),
-				StreamingMode.BATCH_ONLY,
 				leaderElectionService,
 				submittedJobGraphStore,
-				checkpointRecoveryFactory
+				checkpointRecoveryFactory,
+				savepointStore,
+				AkkaUtils.getDefaultTimeout(),
+				Option.apply(null)
 		);
 	}
 }

@@ -26,8 +26,8 @@ import org.apache.flink.runtime.jobgraph.IntermediateResultPartitionID;
 
 import java.io.Serializable;
 
-import static com.google.common.base.Preconditions.checkArgument;
-import static com.google.common.base.Preconditions.checkNotNull;
+import static org.apache.flink.util.Preconditions.checkArgument;
+import static org.apache.flink.util.Preconditions.checkNotNull;
 
 /**
  * Deployment descriptor for a result partition.
@@ -48,11 +48,20 @@ public class ResultPartitionDeploymentDescriptor implements Serializable {
 	/** The number of subpartitions. */
 	private final int numberOfSubpartitions;
 
+	/**
+	 * Flag indicating whether to eagerly deploy consumers.
+	 *
+	 * <p>If <code>true</code>, the consumers are deployed as soon as the
+	 * runtime result is registered at the result manager of the task manager.
+	 */
+	private final boolean eagerlyDeployConsumers;
+
 	public ResultPartitionDeploymentDescriptor(
 			IntermediateDataSetID resultId,
 			IntermediateResultPartitionID partitionId,
 			ResultPartitionType partitionType,
-			int numberOfSubpartitions) {
+			int numberOfSubpartitions,
+			boolean eagerlyDeployConsumers) {
 
 		this.resultId = checkNotNull(resultId);
 		this.partitionId = checkNotNull(partitionId);
@@ -60,6 +69,7 @@ public class ResultPartitionDeploymentDescriptor implements Serializable {
 
 		checkArgument(numberOfSubpartitions >= 1);
 		this.numberOfSubpartitions = numberOfSubpartitions;
+		this.eagerlyDeployConsumers = eagerlyDeployConsumers;
 	}
 
 	public IntermediateDataSetID getResultId() {
@@ -76,6 +86,16 @@ public class ResultPartitionDeploymentDescriptor implements Serializable {
 
 	public int getNumberOfSubpartitions() {
 		return numberOfSubpartitions;
+	}
+
+	/**
+	 * Returns whether consumers should be deployed eagerly (as soon as they
+	 * are registered at the result manager of the task manager).
+	 *
+	 * @return Whether consumers should be deployed eagerly
+	 */
+	public boolean getEagerlyDeployConsumers() {
+		return eagerlyDeployConsumers;
 	}
 
 	@Override
@@ -109,6 +129,7 @@ public class ResultPartitionDeploymentDescriptor implements Serializable {
 		}
 
 		return new ResultPartitionDeploymentDescriptor(
-				resultId, partitionId, partitionType, numberOfSubpartitions);
+				resultId, partitionId, partitionType, numberOfSubpartitions,
+				partition.getIntermediateResult().getEagerlyDeployConsumers());
 	}
 }

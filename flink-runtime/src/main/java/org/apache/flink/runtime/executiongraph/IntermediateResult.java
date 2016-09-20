@@ -23,8 +23,8 @@ import org.apache.flink.runtime.jobgraph.IntermediateDataSetID;
 
 import java.util.concurrent.atomic.AtomicInteger;
 
-import static com.google.common.base.Preconditions.checkArgument;
-import static com.google.common.base.Preconditions.checkNotNull;
+import static org.apache.flink.util.Preconditions.checkArgument;
+import static org.apache.flink.util.Preconditions.checkNotNull;
 
 public class IntermediateResult {
 
@@ -46,11 +46,14 @@ public class IntermediateResult {
 
 	private final ResultPartitionType resultType;
 
+	private final boolean eagerlyDeployConsumers;
+
 	public IntermediateResult(
 			IntermediateDataSetID id,
 			ExecutionJobVertex producer,
 			int numParallelProducers,
-			ResultPartitionType resultType) {
+			ResultPartitionType resultType,
+			boolean eagerlyDeployConsumers) {
 
 		this.id = checkNotNull(id);
 		this.producer = checkNotNull(producer);
@@ -68,6 +71,8 @@ public class IntermediateResult {
 
 		// The runtime type for this produced result
 		this.resultType = checkNotNull(resultType);
+
+		this.eagerlyDeployConsumers = eagerlyDeployConsumers;
 	}
 
 	public void setPartition(int partitionNumber, IntermediateResultPartition partition) {
@@ -101,6 +106,10 @@ public class IntermediateResult {
 
 	public ResultPartitionType getResultType() {
 		return resultType;
+	}
+
+	public boolean getEagerlyDeployConsumers() {
+		return eagerlyDeployConsumers;
 	}
 
 	public int registerConsumer() {

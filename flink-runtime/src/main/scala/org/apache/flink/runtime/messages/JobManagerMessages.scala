@@ -18,17 +18,20 @@
 
 package org.apache.flink.runtime.messages
 
+import java.net.URL
 import java.util.UUID
 
 import akka.actor.ActorRef
 import org.apache.flink.api.common.JobID
 import org.apache.flink.runtime.akka.ListeningBehaviour
-import org.apache.flink.runtime.client.{SerializedJobExecutionResult, JobStatusMessage}
+import org.apache.flink.runtime.blob.BlobKey
+import org.apache.flink.runtime.client.{JobStatusMessage, SerializedJobExecutionResult}
 import org.apache.flink.runtime.executiongraph.{ExecutionAttemptID, ExecutionGraph}
-import org.apache.flink.runtime.instance.{InstanceID, Instance}
+import org.apache.flink.runtime.instance.{Instance, InstanceID}
 import org.apache.flink.runtime.io.network.partition.ResultPartitionID
 import org.apache.flink.runtime.jobgraph.{IntermediateDataSetID, JobGraph, JobStatus, JobVertexID}
 import org.apache.flink.runtime.jobmanager.SubmittedJobGraph
+import org.apache.flink.runtime.messages.checkpoint.AbstractCheckpointMessage
 import org.apache.flink.runtime.util.SerializedThrowable
 
 import scala.collection.JavaConverters._
@@ -67,6 +70,19 @@ object JobManagerMessages {
     extends RequiresLeaderSessionID
 
   /**
+    * Registers the sender of the message as the client for the provided job identifier.
+    * This message is acknowledged by the JobManager with [[RegisterJobClientSuccess]]
+    * or [[JobNotFound]] if the job was not running.
+    * @param jobID The job id of the job
+    * @param listeningBehaviour The types of updates which will be sent to the sender
+    * after registration
+    */
+  case class RegisterJobClient(
+      jobID: JobID,
+      listeningBehaviour: ListeningBehaviour)
+    extends RequiresLeaderSessionID
+
+  /**
    * Triggers the recovery of the job with the given ID.
    *
    * @param jobId ID of the job to recover
@@ -95,6 +111,14 @@ object JobManagerMessages {
   case class CancelJob(jobID: JobID) extends RequiresLeaderSessionID
 
   /**
+   * Stops a (streaming) job with the given [[jobID]] at the JobManager. The result of
+   * stopping is sent back to the sender as a [[StoppingResponse]] message.
+   *
+   * @param jobID
+   */
+  case class StopJob(jobID: JobID) extends RequiresLeaderSessionID
+
+  /**
    * Requesting next input split for the
    * [[org.apache.flink.runtime.executiongraph.ExecutionJobVertex]]
    * of the job specified by [[jobID]]. The next input split is sent back to the sender as a
@@ -121,7 +145,7 @@ object JobManagerMessages {
    * Requests the current state of the partition.
    *
    * The state of a partition is currently bound to the state of the producing execution.
-   * 
+   *
    * @param jobId The job ID of the job, which produces the partition.
    * @param partitionId The partition ID of the partition to request the state of.
    * @param taskExecutionId The execution attempt ID of the task requesting the partition state.
@@ -185,6 +209,23 @@ object JobManagerMessages {
   case object RequestTotalNumberOfSlots
 
   /**
+    * Requests all entities necessary for reconstructing a job class loader
+    * May respond with [[ClassloadingProps]] or [[JobNotFound]]
+    * @param jobId The job id of the registered job
+    */
+  case class RequestClassloadingProps(jobId: JobID)
+
+  /**
+    * Response to [[RequestClassloadingProps]]
+    * @param blobManagerPort The port of the blobManager
+    * @param requiredJarFiles The blob keys of the required jar files
+    * @param requiredClasspaths The urls of the required classpaths
+    */
+  case class ClassloadingProps(blobManagerPort: Integer,
+                               requiredJarFiles: java.util.List[BlobKey],
+                               requiredClasspaths: java.util.List[URL])
+
+  /**
    * Requests the port of the blob manager from the job manager. The result is sent back to the
    * sender as an [[Int]].
    */
@@ -206,18 +247,29 @@ object JobManagerMessages {
    * @param jobId Ths job's ID.
    */
   case class JobSubmitSuccess(jobId: JobID)
-  
+
+  /**
+    * Denotes a successful registration of a JobClientActor for a running job
+    * @param jobId The job id of the registered job
+    */
+  case class RegisterJobClientSuccess(jobId: JobID)
+
+  /**
+    * Denotes messages which contain the result of a completed job execution
+    */
+  sealed trait JobResultMessage
+
   /**
    * Denotes a successful job execution.
    * @param result The result of the job execution, in serialized form.
    */
-  case class JobResultSuccess(result: SerializedJobExecutionResult)
+  case class JobResultSuccess(result: SerializedJobExecutionResult) extends JobResultMessage
 
   /**
    * Denotes an unsuccessful job execution.
    * @param cause The exception that caused the job to fail, in serialized form.
    */
-  case class JobResultFailure(cause: SerializedThrowable)
+  case class JobResultFailure(cause: SerializedThrowable) extends JobResultMessage
 
 
   sealed trait CancellationResponse{
@@ -236,6 +288,23 @@ object JobManagerMessages {
    * @param cause
    */
   case class CancellationFailure(jobID: JobID, cause: Throwable) extends CancellationResponse
+
+  sealed trait StoppingResponse {
+    def jobID: JobID
+  }
+
+  /**
+   * Denotes a successful (streaming) job stopping
+   * @param jobID
+   */
+  case class StoppingSuccess(jobID: JobID) extends StoppingResponse
+
+  /**
+   * Denotes a failed (streaming) job stopping
+   * @param jobID
+   * @param cause
+   */
+  case class StoppingFailure(jobID: JobID, cause: Throwable) extends StoppingResponse
 
   /**
    * Requests all currently running jobs from the job manager. This message triggers a
@@ -289,7 +358,7 @@ object JobManagerMessages {
 
   /**
    * Denotes that there is no job with [[jobID]] retrievable. This message can be the response of
-   * [[RequestJob]] or [[RequestJobStatus]].
+   * [[RequestJob]], [[RequestJobStatus]] or [[RegisterJobClient]].
    *
    * @param jobID
    */
@@ -390,6 +459,52 @@ object JobManagerMessages {
    */
   case class ResponseWebMonitorPort(port: Integer)
 
+  /**
+    * Triggers a savepoint for the specified job.
+    *
+    * This is not a subtype of [[AbstractCheckpointMessage]], because it is a
+    * control-flow message, which is *not* part of the checkpointing mechanism
+    * of triggering and acknowledging checkpoints.
+    *
+    * @param jobId The JobID of the job to trigger the savepoint for.
+    */
+  case class TriggerSavepoint(jobId: JobID) extends RequiresLeaderSessionID
+
+  /**
+    * Response after a successful savepoint trigger containing the savepoint path.
+    *
+    * @param jobId The job ID for which the savepoint was triggered.
+    * @param savepointPath The path of the savepoint.
+    */
+  case class TriggerSavepointSuccess(jobId: JobID, savepointPath: String)
+
+  /**
+    * Response after a failed savepoint trigger containing the failure cause.
+    *
+    * @param jobId The job ID for which the savepoint was triggered.
+    * @param cause The cause of the failure.
+    */
+  case class TriggerSavepointFailure(jobId: JobID, cause: Throwable)
+
+  /**
+    * Disposes a savepoint.
+    *
+    * @param savepointPath The path of the savepoint to dispose.
+    */
+  case class DisposeSavepoint(
+      savepointPath: String)
+    extends RequiresLeaderSessionID
+
+  /** Response after a successful savepoint dispose. */
+  case object DisposeSavepointSuccess
+
+  /**
+    * Response after a failed savepoint dispose containing the failure cause.
+    *
+    * @param cause The cause of the failure.
+    */
+  case class DisposeSavepointFailure(cause: Throwable)
+
   // --------------------------------------------------------------------------
   // Utility methods to allow simpler case object access from Java
   // --------------------------------------------------------------------------
@@ -397,19 +512,19 @@ object JobManagerMessages {
   def getRequestJobStatus(jobId : JobID) : AnyRef = {
     RequestJobStatus(jobId)
   }
-  
+
   def getRequestNumberRegisteredTaskManager : AnyRef = {
     RequestNumberRegisteredTaskManager
   }
-  
+
   def getRequestTotalNumberOfSlots : AnyRef = {
     RequestTotalNumberOfSlots
   }
-  
+
   def getRequestBlobManagerPort : AnyRef = {
     RequestBlobManagerPort
   }
-  
+
   def getRequestRunningJobs : AnyRef = {
     RequestRunningJobs
   }
@@ -421,11 +536,11 @@ object JobManagerMessages {
   def getRequestRegisteredTaskManagers : AnyRef = {
     RequestRegisteredTaskManagers
   }
-  
+
   def getRequestJobManagerStatus : AnyRef = {
     RequestJobManagerStatus
   }
-  
+
   def getJobManagerStatusAlive : AnyRef = {
     JobManagerStatusAlive
   }
@@ -441,8 +556,12 @@ object JobManagerMessages {
   def getRecoverAllJobs: AnyRef = {
     RecoverAllJobs
   }
-  
+
   def getRequestWebMonitorPort: AnyRef = {
     RequestWebMonitorPort
+  }
+
+  def getDisposeSavepointSuccess: AnyRef = {
+    DisposeSavepointSuccess
   }
 }

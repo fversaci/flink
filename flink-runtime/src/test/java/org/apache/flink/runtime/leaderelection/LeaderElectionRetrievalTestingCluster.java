@@ -20,7 +20,6 @@ package org.apache.flink.runtime.leaderelection;
 
 import org.apache.flink.configuration.ConfigConstants;
 import org.apache.flink.configuration.Configuration;
-import org.apache.flink.runtime.StreamingMode;
 import org.apache.flink.runtime.leaderretrieval.LeaderRetrievalService;
 import org.apache.flink.runtime.testingUtils.TestingCluster;
 import scala.Option;
@@ -39,7 +38,6 @@ public class LeaderElectionRetrievalTestingCluster extends TestingCluster {
 
 	private final Configuration userConfiguration;
 	private final boolean useSingleActorSystem;
-	private final StreamingMode streamingMode;
 
 	public List<TestingLeaderElectionService> leaderElectionServices;
 	public List<TestingLeaderRetrievalService> leaderRetrievalServices;
@@ -49,13 +47,11 @@ public class LeaderElectionRetrievalTestingCluster extends TestingCluster {
 	public LeaderElectionRetrievalTestingCluster(
 			Configuration userConfiguration,
 			boolean singleActorSystem,
-			boolean synchronousDispatcher,
-			StreamingMode streamingMode) {
-		super(userConfiguration, singleActorSystem, synchronousDispatcher, streamingMode);
+			boolean synchronousDispatcher) {
+		super(userConfiguration, singleActorSystem, synchronousDispatcher);
 
 		this.userConfiguration = userConfiguration;
 		this.useSingleActorSystem = singleActorSystem;
-		this.streamingMode = streamingMode;
 
 		leaderElectionServices = new ArrayList<TestingLeaderElectionService>();
 		leaderRetrievalServices = new ArrayList<TestingLeaderRetrievalService>();
@@ -64,11 +60,6 @@ public class LeaderElectionRetrievalTestingCluster extends TestingCluster {
 	@Override
 	public Configuration userConfiguration() {
 		return this.userConfiguration;
-	}
-
-	@Override
-	public StreamingMode streamingMode() {
-		return streamingMode;
 	}
 
 	@Override
@@ -94,7 +85,7 @@ public class LeaderElectionRetrievalTestingCluster extends TestingCluster {
 
 	@Override
 	public int getNumberOfJobManagers() {
-		return this.configuration().getInteger(
+		return this.originalConfiguration().getInteger(
 				ConfigConstants.LOCAL_NUMBER_JOB_MANAGER,
 				ConfigConstants.DEFAULT_LOCAL_NUMBER_JOB_MANAGER);
 	}
@@ -116,6 +107,13 @@ public class LeaderElectionRetrievalTestingCluster extends TestingCluster {
 
 		for(TestingLeaderRetrievalService service: leaderRetrievalServices) {
 			service.notifyListener(address, leaderSessionID);
+		}
+	}
+
+	public void revokeLeadership() {
+		if (leaderIndex >= 0) {
+			leaderElectionServices.get(leaderIndex).notLeader();
+			leaderIndex = -1;
 		}
 	}
 }

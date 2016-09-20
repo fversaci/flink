@@ -21,6 +21,7 @@ import java.io.IOException;
 import java.io.OutputStream;
 import java.net.Socket;
 
+import org.apache.flink.annotation.PublicEvolving;
 import org.apache.flink.configuration.Configuration;
 import org.apache.flink.runtime.util.SerializableObject;
 import org.apache.flink.streaming.util.serialization.SerializationSchema;
@@ -28,8 +29,8 @@ import org.apache.flink.streaming.util.serialization.SerializationSchema;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import static com.google.common.base.Preconditions.checkArgument;
-import static com.google.common.base.Preconditions.checkNotNull;
+import static org.apache.flink.util.Preconditions.checkArgument;
+import static org.apache.flink.util.Preconditions.checkNotNull;
 
 /**
  * Socket client that acts as a streaming sink. The data is sent to a Socket as a byte array.
@@ -41,6 +42,7 @@ import static com.google.common.base.Preconditions.checkNotNull;
  *
  * @param <IN> data to be written into the Socket.
  */
+@PublicEvolving
 public class SocketClientSink<IN> extends RichSinkFunction<IN> {
 
 	private static final long serialVersionUID = 1L;
@@ -51,7 +53,7 @@ public class SocketClientSink<IN> extends RichSinkFunction<IN> {
 	
 	
 	private final SerializableObject lock = new SerializableObject();
-	private final SerializationSchema<IN, byte[]> schema;
+	private final SerializationSchema<IN> schema;
 	private final String hostName;
 	private final int port;
 	private final int maxNumRetries;
@@ -72,7 +74,7 @@ public class SocketClientSink<IN> extends RichSinkFunction<IN> {
 	 * @param port Port of the server.
 	 * @param schema Schema used to serialize the data into bytes.
 	 */
-	public SocketClientSink(String hostName, int port, SerializationSchema<IN, byte[]> schema) {
+	public SocketClientSink(String hostName, int port, SerializationSchema<IN> schema) {
 		this(hostName, port, schema, 0);
 	}
 
@@ -86,7 +88,7 @@ public class SocketClientSink<IN> extends RichSinkFunction<IN> {
 	 * @param schema Schema used to serialize the data into bytes.
 	 * @param maxNumRetries The maximum number of retries after a message send failed.
 	 */
-	public SocketClientSink(String hostName, int port, SerializationSchema<IN, byte[]> schema, int maxNumRetries) {
+	public SocketClientSink(String hostName, int port, SerializationSchema<IN> schema, int maxNumRetries) {
 		this(hostName, port, schema, maxNumRetries, false);
 	}
 
@@ -100,7 +102,7 @@ public class SocketClientSink<IN> extends RichSinkFunction<IN> {
 	 * @param maxNumRetries The maximum number of retries after a message send failed.
 	 * @param autoflush Flag to indicate whether the socket stream should be flushed after each message.
 	 */
-	public SocketClientSink(String hostName, int port, SerializationSchema<IN, byte[]> schema,
+	public SocketClientSink(String hostName, int port, SerializationSchema<IN> schema,
 							int maxNumRetries, boolean autoflush)
 	{
 		checkArgument(port > 0 && port < 65536, "port is out of range");

@@ -16,10 +16,10 @@
  */
 package org.apache.flink.storm.split;
 
-import org.apache.flink.storm.api.FlinkLocalCluster;
-import org.apache.flink.storm.api.FlinkTopologyBuilder;
-
+import backtype.storm.topology.TopologyBuilder;
 import backtype.storm.utils.Utils;
+import org.apache.flink.storm.api.FlinkLocalCluster;
+import org.apache.flink.storm.api.FlinkTopology;
 
 public class SplitStreamSpoutLocal {
 	public final static String topologyId = "Spout split stream example";
@@ -35,16 +35,14 @@ public class SplitStreamSpoutLocal {
 		}
 
 		// build Topology the Storm way
-		final FlinkTopologyBuilder builder = SplitSpoutTopology.buildTopology();
+		final TopologyBuilder builder = SplitSpoutTopology.buildTopology();
 
-		// execute program locally
 		final FlinkLocalCluster cluster = FlinkLocalCluster.getLocalCluster();
-		cluster.submitTopology(topologyId, null, builder.createTopology());
+		cluster.submitTopology(topologyId, null, FlinkTopology.createTopology(builder));
 
+		// run topology for 5 seconds
 		Utils.sleep(5 * 1000);
 
-		// TODO kill does no do anything so far
-		cluster.killTopology(topologyId);
 		cluster.shutdown();
 	}
 

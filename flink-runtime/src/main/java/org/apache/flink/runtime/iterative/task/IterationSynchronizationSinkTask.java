@@ -39,8 +39,7 @@ import org.apache.flink.runtime.iterative.event.WorkerDoneEvent;
 import org.apache.flink.runtime.jobgraph.tasks.AbstractInvokable;
 import org.apache.flink.runtime.operators.util.TaskConfig;
 import org.apache.flink.types.Value;
-
-import com.google.common.base.Preconditions;
+import org.apache.flink.util.Preconditions;
 
 /**
  * The task responsible for synchronizing all iteration heads, implemented as an output task. This task
@@ -68,16 +67,14 @@ public class IterationSynchronizationSinkTask extends AbstractInvokable implemen
 
 	private final AtomicBoolean terminated = new AtomicBoolean(false);
 
-
 	// --------------------------------------------------------------------------------------------
 	
 	@Override
-	public void registerInputOutput() {
-		this.headEventReader = new MutableRecordReader<IntValue>(getEnvironment().getInputGate(0));
-	}
-
-	@Override
 	public void invoke() throws Exception {
+		this.headEventReader = new MutableRecordReader<IntValue>(
+				getEnvironment().getInputGate(0),
+				getEnvironment().getTaskManagerInfo().getTmpDirectories());
+
 		TaskConfig taskConfig = new TaskConfig(getTaskConfiguration());
 		
 		// store all aggregators
@@ -188,7 +185,7 @@ public class IterationSynchronizationSinkTask extends AbstractInvokable implemen
 		
 		// read (and thereby process all events in the handler's event handling functions)
 		try {
-			while (this.headEventReader.next(rec)) {
+			if (this.headEventReader.next(rec)) {
 				throw new RuntimeException("Synchronization task must not see any records!");
 			}
 		} catch (InterruptedException iex) {
@@ -204,7 +201,7 @@ public class IterationSynchronizationSinkTask extends AbstractInvokable implemen
 	}
 
 	private String formatLogString(String message) {
-		return BatchTask.constructLogString(message, getEnvironment().getTaskName(), this);
+		return BatchTask.constructLogString(message, getEnvironment().getTaskInfo().getTaskName(), this);
 	}
 	
 	// --------------------------------------------------------------------------------------------

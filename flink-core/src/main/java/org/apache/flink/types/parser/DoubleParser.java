@@ -19,9 +19,12 @@
 
 package org.apache.flink.types.parser;
 
+import org.apache.flink.annotation.PublicEvolving;
+
 /**
  * Parses a text field into a Double.
  */
+@PublicEvolving
 public class DoubleParser extends FieldParser<Double> {
 
 	private static final Double DOUBLE_INSTANCE = Double.valueOf(0.0);
@@ -36,6 +39,10 @@ public class DoubleParser extends FieldParser<Double> {
 
 		while (i < limit) {
 			if (i < delimLimit && delimiterNext(bytes, i, delimiter)) {
+				if (i == startPos) {
+					setErrorState(ParseErrorState.EMPTY_COLUMN);
+					return -1;
+				}
 				break;
 			}
 			i++;

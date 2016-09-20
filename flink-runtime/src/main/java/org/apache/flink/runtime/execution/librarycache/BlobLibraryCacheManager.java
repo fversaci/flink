@@ -37,10 +37,10 @@ import org.apache.flink.runtime.blob.BlobService;
 import org.apache.flink.runtime.executiongraph.ExecutionAttemptID;
 import org.apache.flink.api.common.JobID;
 import org.apache.flink.util.ExceptionUtils;
+import org.apache.flink.util.Preconditions;
+
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-
-import com.google.common.base.Preconditions;
 
 /**
  * For each job graph that is submitted to the system the library cache manager maintains
@@ -68,14 +68,16 @@ public final class BlobLibraryCacheManager extends TimerTask implements LibraryC
 	/** The blob service to download libraries */
 	private final BlobService blobService;
 	
+	private final Timer cleanupTimer;
+	
 	// --------------------------------------------------------------------------------------------
 
 	public BlobLibraryCacheManager(BlobService blobService, long cleanupInterval) {
 		this.blobService = blobService;
 
 		// Initializing the clean up task
-		Timer timer = new Timer(true);
-		timer.schedule(this, cleanupInterval);
+		this.cleanupTimer = new Timer(true);
+		this.cleanupTimer.schedule(this, cleanupInterval, cleanupInterval);
 	}
 
 	// --------------------------------------------------------------------------------------------
@@ -198,7 +200,14 @@ public final class BlobLibraryCacheManager extends TimerTask implements LibraryC
 
 	@Override
 	public void shutdown() throws IOException{
+		try {
+			run();
+		} catch (Throwable t) {
+			LOG.warn("Failed to run clean up task before shutdown", t);
+		}
+
 		blobService.shutdown();
+		cleanupTimer.cancel();
 	}
 	
 	/**
@@ -207,7 +216,6 @@ public final class BlobLibraryCacheManager extends TimerTask implements LibraryC
 	@Override
 	public void run() {
 		synchronized (lockObject) {
-			
 			Iterator<Map.Entry<BlobKey, Integer>> entryIter = blobKeyReferenceCounters.entrySet().iterator();
 			
 			while (entryIter.hasNext()) {
@@ -326,7 +334,7 @@ public final class BlobLibraryCacheManager extends TimerTask implements LibraryC
 	private static class FlinkUserCodeClassLoader extends URLClassLoader {
 
 		public FlinkUserCodeClassLoader(URL[] urls) {
-			super(urls);
+			super(urls, FlinkUserCodeClassLoader.class.getClassLoader());
 		}
 	}
 }

@@ -23,8 +23,10 @@ import java.util.Arrays;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Map;
+import java.util.Properties;
 import java.util.Set;
 
+import org.apache.flink.annotation.Public;
 import org.apache.flink.api.common.ExecutionConfig;
 import org.apache.flink.core.io.IOReadableWritable;
 import org.apache.flink.core.memory.DataInputView;
@@ -36,6 +38,7 @@ import org.slf4j.LoggerFactory;
 /**
  * Lightweight configuration object which stores key/value pairs.
  */
+@Public
 public class Configuration extends ExecutionConfig.GlobalJobParameters 
 		implements IOReadableWritable, java.io.Serializable, Cloneable {
 
@@ -54,7 +57,7 @@ public class Configuration extends ExecutionConfig.GlobalJobParameters
 	
 
 	/** Stores the concrete key/value pairs of this configuration object. */
-	private final HashMap<String, Object> confData;
+	protected final HashMap<String, Object> confData;
 	
 	// --------------------------------------------------------------------------------------------
 
@@ -415,6 +418,17 @@ public class Configuration extends ExecutionConfig.GlobalJobParameters
 	public Set<String> keySet() {
 		synchronized (this.confData) {
 			return new HashSet<String>(this.confData.keySet());
+		}
+	}
+
+	/**
+	 * Adds all entries in this {@code Configuration} to the given {@link Properties}.
+	 */
+	public void addAllToProperties(Properties props) {
+		synchronized (this.confData) {
+			for (Map.Entry<String, Object> entry : this.confData.entrySet()) {
+				props.put(entry.getKey(), entry.getValue());
+			}
 		}
 	}
 

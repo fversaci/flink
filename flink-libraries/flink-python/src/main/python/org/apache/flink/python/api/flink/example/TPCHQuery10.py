@@ -76,7 +76,7 @@ if __name__ == "__main__":
              STRING, STRING, STRING, STRING, STRING, STRING, STRING, STRING], '\n', '|') \
         .project(0,5,6,8) \
         .filter(LineitemFilter()) \
-        .map(ComputeRevenue(), [INT, FLOAT])
+        .map(ComputeRevenue())
 
 	nation = env \
     	.read_csv(sys.argv[4], [INT, STRING, INT, STRING], '\n', '|') \
@@ -110,6 +110,6 @@ if __name__ == "__main__":
 
 	result.write_csv(sys.argv[5], '\n', '|', WriteMode.OVERWRITE)
 
-	env.set_degree_of_parallelism(1)
+	env.set_parallelism(1)
 
 	env.execute(local=True)

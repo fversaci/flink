@@ -17,11 +17,15 @@
 
 package org.apache.flink.streaming.util.serialization;
 
+import org.apache.flink.annotation.PublicEvolving;
 import org.apache.flink.api.common.typeinfo.BasicTypeInfo;
 import org.apache.flink.api.common.typeinfo.TypeInformation;
 
-public class SimpleStringSchema implements DeserializationSchema<String>,
-		SerializationSchema<String, String> {
+/**
+ * Very simple serialization schema for strings.
+ */
+@PublicEvolving
+public class SimpleStringSchema implements DeserializationSchema<String>, SerializationSchema<String> {
 
 	private static final long serialVersionUID = 1L;
 
@@ -36,8 +40,8 @@ public class SimpleStringSchema implements DeserializationSchema<String>,
 	}
 
 	@Override
-	public String serialize(String element) {
-		return element;
+	public byte[] serialize(String element) {
+		return element.getBytes();
 	}
 
 	@Override

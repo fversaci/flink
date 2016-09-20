@@ -24,6 +24,8 @@ import java.nio.ByteOrder;
 
 import org.apache.flink.core.io.IOReadableWritable;
 import org.apache.flink.core.memory.MemorySegment;
+import org.apache.flink.metrics.Counter;
+import org.apache.flink.runtime.metrics.groups.IOMetricGroup;
 import org.apache.flink.runtime.accumulators.AccumulatorRegistry;
 import org.apache.flink.runtime.io.network.buffer.Buffer;
 import org.apache.flink.runtime.util.DataOutputSerializer;
@@ -52,6 +54,8 @@ public class SpanningRecordSerializer<T extends IOReadableWritable> implements R
 	private int limit;
 
 	private AccumulatorRegistry.Reporter reporter;
+
+	private transient Counter numBytesOut;
 
 	public SpanningRecordSerializer() {
 		this.serializationBuffer = new DataOutputSerializer(128);
@@ -84,6 +88,10 @@ public class SpanningRecordSerializer<T extends IOReadableWritable> implements R
 		if (reporter != null) {
 			reporter.reportNumBytesOut(len);
 			reporter.reportNumRecordsOut(1);
+		}
+		
+		if (numBytesOut != null) {
+			numBytesOut.inc(len);
 		}
 
 		this.dataBuffer = this.serializationBuffer.wrapAsByteBuffer();
@@ -186,5 +194,10 @@ public class SpanningRecordSerializer<T extends IOReadableWritable> implements R
 	@Override
 	public void setReporter(AccumulatorRegistry.Reporter reporter) {
 		this.reporter = reporter;
+	}
+
+	@Override
+	public void instantiateMetrics(IOMetricGroup metrics) {
+		numBytesOut = metrics.getBytesOutCounter();
 	}
 }

@@ -32,6 +32,7 @@ import org.apache.flink.streaming.util.TestHarnessUtil;
 import org.junit.Assert;
 import org.junit.Test;
 import org.junit.runner.RunWith;
+import org.powermock.core.classloader.annotations.PowerMockIgnore;
 import org.powermock.core.classloader.annotations.PrepareForTest;
 import org.powermock.modules.junit4.PowerMockRunner;
 
@@ -50,6 +51,7 @@ import java.util.concurrent.ConcurrentLinkedQueue;
  */
 @RunWith(PowerMockRunner.class)
 @PrepareForTest({ResultPartitionWriter.class})
+@PowerMockIgnore({"javax.management.*", "com.sun.jndi.*"})
 public class TwoInputStreamTaskTest {
 
 	/**
@@ -71,6 +73,7 @@ public class TwoInputStreamTaskTest {
 		ConcurrentLinkedQueue<Object> expectedOutput = new ConcurrentLinkedQueue<Object>();
 
 		testHarness.invoke();
+		testHarness.waitForTaskRunning();
 
 		testHarness.processElement(new StreamRecord<String>("Hello", initialTime + 1), 0, 0);
 		expectedOutput.add(new StreamRecord<String>("Hello", initialTime + 1));
@@ -110,6 +113,7 @@ public class TwoInputStreamTaskTest {
 		long initialTime = 0L;
 
 		testHarness.invoke();
+		testHarness.waitForTaskRunning();
 
 		testHarness.processElement(new Watermark(initialTime), 0, 0);
 		testHarness.processElement(new Watermark(initialTime), 0, 1);
@@ -189,6 +193,7 @@ public class TwoInputStreamTaskTest {
 		long initialTime = 0L;
 
 		testHarness.invoke();
+		testHarness.waitForTaskRunning();
 
 		testHarness.processEvent(new CheckpointBarrier(0, 0), 0, 0);
 
@@ -255,6 +260,7 @@ public class TwoInputStreamTaskTest {
 		long initialTime = 0L;
 
 		testHarness.invoke();
+		testHarness.waitForTaskRunning();
 
 		testHarness.processEvent(new CheckpointBarrier(0, 0), 0, 0);
 

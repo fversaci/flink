@@ -18,9 +18,10 @@
 
 package org.apache.flink.runtime.taskmanager;
 
-import com.google.common.collect.Maps;
-
+import org.apache.flink.api.common.ExecutionConfig;
+import org.apache.flink.api.common.JobID;
 import org.apache.flink.configuration.Configuration;
+import org.apache.flink.core.testutils.OneShotLatch;
 import org.apache.flink.runtime.blob.BlobKey;
 import org.apache.flink.runtime.broadcast.BroadcastVariableManager;
 import org.apache.flink.runtime.deployment.InputGateDeploymentDescriptor;
@@ -33,7 +34,6 @@ import org.apache.flink.runtime.executiongraph.ExecutionAttemptID;
 import org.apache.flink.runtime.filecache.FileCache;
 import org.apache.flink.runtime.instance.ActorGateway;
 import org.apache.flink.runtime.io.disk.iomanager.IOManager;
-import org.apache.flink.api.common.JobID;
 import org.apache.flink.runtime.io.network.NetworkEnvironment;
 import org.apache.flink.runtime.io.network.partition.ResultPartitionConsumableNotifier;
 import org.apache.flink.runtime.io.network.partition.ResultPartitionID;
@@ -42,18 +42,22 @@ import org.apache.flink.runtime.io.network.partition.consumer.SingleInputGate;
 import org.apache.flink.runtime.jobgraph.IntermediateDataSetID;
 import org.apache.flink.runtime.jobgraph.JobVertexID;
 import org.apache.flink.runtime.jobgraph.tasks.AbstractInvokable;
+import org.apache.flink.runtime.jobgraph.tasks.InputSplitProvider;
 import org.apache.flink.runtime.memory.MemoryManager;
 import org.apache.flink.runtime.messages.TaskMessages;
-
+import org.apache.flink.runtime.metrics.groups.TaskMetricGroup;
+import org.apache.flink.runtime.query.TaskKvStateRegistry;
+import org.apache.flink.util.SerializedValue;
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
-
 import scala.concurrent.duration.FiniteDuration;
 
+import java.io.IOException;
 import java.lang.reflect.Field;
 import java.net.URL;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.LinkedBlockingQueue;
@@ -65,7 +69,6 @@ import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
-
 import static org.mockito.Matchers.any;
 import static org.mockito.Matchers.eq;
 import static org.mockito.Mockito.doThrow;
@@ -91,6 +94,9 @@ public class TaskTest {
 	private ActorGateway jobManagerGateway;
 	private ActorGateway listenerGateway;
 
+	private ActorGatewayTaskExecutionStateListener listener;
+	private ActorGatewayTaskManagerConnection taskManagerConnection;
+
 	private BlockingQueue<Object> taskManagerMessages;
 	private BlockingQueue<Object> jobManagerMessages;
 	private BlockingQueue<Object> listenerMessages;
@@ -103,6 +109,9 @@ public class TaskTest {
 		taskManagerGateway = new ForwardingActorGateway(taskManagerMessages);
 		jobManagerGateway = new ForwardingActorGateway(jobManagerMessages);
 		listenerGateway = new ForwardingActorGateway(listenerMessages);
+
+		listener = new ActorGatewayTaskExecutionStateListener(listenerGateway);
+		taskManagerConnection = new ActorGatewayTaskManagerConnection(taskManagerGateway);
 		
 		awaitLatch = new OneShotLatch();
 		triggerLatch = new OneShotLatch();
@@ -133,7 +142,7 @@ public class TaskTest {
 			assertFalse(task.isCanceledOrFailed());
 			assertNull(task.getFailureCause());
 			
-			task.registerExecutionListener(listenerGateway);
+			task.registerExecutionListener(listener);
 			
 			// go into the run method. we should switch to DEPLOYING, RUNNING, then
 			// FINISHED, and all should be good
@@ -208,7 +217,7 @@ public class TaskTest {
 			assertFalse(task.isCanceledOrFailed());
 			assertNull(task.getFailureCause());
 
-			task.registerExecutionListener(listenerGateway);
+			task.registerExecutionListener(listener);
 
 			// should fail
 			task.run();
@@ -242,14 +251,16 @@ public class TaskTest {
 			ResultPartitionManager partitionManager = mock(ResultPartitionManager.class);
 			ResultPartitionConsumableNotifier consumableNotifier = mock(ResultPartitionConsumableNotifier.class);
 			NetworkEnvironment network = mock(NetworkEnvironment.class);
-			when(network.getPartitionManager()).thenReturn(partitionManager);
-			when(network.getPartitionConsumableNotifier()).thenReturn(consumableNotifier);
+			when(network.getResultPartitionManager()).thenReturn(partitionManager);
 			when(network.getDefaultIOMode()).thenReturn(IOManager.IOMode.SYNC);
 			doThrow(new RuntimeException("buffers")).when(network).registerTask(any(Task.class));
-			
-			Task task = createTask(TestInvokableCorrect.class, libCache, network);
 
-			task.registerExecutionListener(listenerGateway);
+			JobManagerCommunicationFactory jobManagerCommunicationFactory = mock(JobManagerCommunicationFactory.class);
+			when(jobManagerCommunicationFactory.createResultPartitionConsumableNotifier(any(Task.class))).thenReturn(consumableNotifier);
+			
+			Task task = createTask(TestInvokableCorrect.class, libCache, network, jobManagerCommunicationFactory);
+
+			task.registerExecutionListener(listener);
 
 			task.run();
 
@@ -270,7 +281,7 @@ public class TaskTest {
 	public void testInvokableInstantiationFailed() {
 		try {
 			Task task = createTask(InvokableNonInstantiable.class);
-			task.registerExecutionListener(listenerGateway);
+			task.registerExecutionListener(listener);
 
 			task.run();
 
@@ -288,31 +299,10 @@ public class TaskTest {
 	}
 	
 	@Test
-	public void testExecutionFailsInRegisterInputOutput() {
-		try {
-			Task task = createTask(InvokableWithExceptionInRegisterInOut.class);
-			task.registerExecutionListener(listenerGateway);
-
-			task.run();
-
-			assertEquals(ExecutionState.FAILED, task.getExecutionState());
-			assertTrue(task.isCanceledOrFailed());
-			assertTrue(task.getFailureCause().getMessage().contains("registerInputOutput"));
-
-			validateUnregisterTask(task.getExecutionId());
-			validateListenerMessage(ExecutionState.FAILED, task, true);
-		}
-		catch (Exception e) {
-			e.printStackTrace();
-			fail(e.getMessage());
-		}
-	}
-	
-	@Test
 	public void testExecutionFailsInInvoke() {
 		try {
 			Task task = createTask(InvokableWithExceptionInInvoke.class);
-			task.registerExecutionListener(listenerGateway);
+			task.registerExecutionListener(listener);
 			
 			task.run();
 
@@ -333,72 +323,10 @@ public class TaskTest {
 	}
 	
 	@Test
-	public void testCancelDuringRegisterInputOutput() {
-		try {
-			Task task = createTask(InvokableBlockingInRegisterInOut.class);
-			task.registerExecutionListener(listenerGateway);
-
-			// run the task asynchronous
-			task.startTaskThread();
-			
-			// wait till the task is in regInOut
-			awaitLatch.await();
-			
-			task.cancelExecution();
-			assertEquals(ExecutionState.CANCELING, task.getExecutionState());
-			triggerLatch.trigger();
-			
-			task.getExecutingThread().join();
-
-			assertEquals(ExecutionState.CANCELED, task.getExecutionState());
-			assertTrue(task.isCanceledOrFailed());
-			assertNull(task.getFailureCause());
-			
-			validateUnregisterTask(task.getExecutionId());
-			validateCancelingAndCanceledListenerMessage(task);
-		}
-		catch (Exception e) {
-			e.printStackTrace();
-			fail(e.getMessage());
-		}
-	}
-
-	@Test
-	public void testFailDuringRegisterInputOutput() {
-		try {
-			Task task = createTask(InvokableBlockingInRegisterInOut.class);
-			task.registerExecutionListener(listenerGateway);
-
-			// run the task asynchronous
-			task.startTaskThread();
-
-			// wait till the task is in regInOut
-			awaitLatch.await();
-
-			task.failExternally(new Exception("test"));
-			assertEquals(ExecutionState.FAILED, task.getExecutionState());
-			triggerLatch.trigger();
-
-			task.getExecutingThread().join();
-
-			assertEquals(ExecutionState.FAILED, task.getExecutionState());
-			assertTrue(task.isCanceledOrFailed());
-			assertTrue(task.getFailureCause().getMessage().contains("test"));
-
-			validateUnregisterTask(task.getExecutionId());
-			validateListenerMessage(ExecutionState.FAILED, task, true);
-		}
-		catch (Exception e) {
-			e.printStackTrace();
-			fail(e.getMessage());
-		}
-	}
-
-	@Test
 	public void testCancelDuringInvoke() {
 		try {
 			Task task = createTask(InvokableBlockingInInvoke.class);
-			task.registerExecutionListener(listenerGateway);
+			task.registerExecutionListener(listener);
 
 			// run the task asynchronous
 			task.startTaskThread();
@@ -432,7 +360,7 @@ public class TaskTest {
 	public void testFailExternallyDuringInvoke() {
 		try {
 			Task task = createTask(InvokableBlockingInInvoke.class);
-			task.registerExecutionListener(listenerGateway);
+			task.registerExecutionListener(listener);
 
 			// run the task asynchronous
 			task.startTaskThread();
@@ -462,34 +390,10 @@ public class TaskTest {
 	}
 
 	@Test
-	public void testCanceledAfterExecutionFailedInRegInOut() {
-		try {
-			Task task = createTask(InvokableWithExceptionInRegisterInOut.class);
-			task.registerExecutionListener(listenerGateway);
-
-			task.run();
-			
-			// this should not overwrite the failure state
-			task.cancelExecution();
-
-			assertEquals(ExecutionState.FAILED, task.getExecutionState());
-			assertTrue(task.isCanceledOrFailed());
-			assertTrue(task.getFailureCause().getMessage().contains("registerInputOutput"));
-
-			validateUnregisterTask(task.getExecutionId());
-			validateListenerMessage(ExecutionState.FAILED, task, true);
-		}
-		catch (Exception e) {
-			e.printStackTrace();
-			fail(e.getMessage());
-		}
-	}
-
-	@Test
 	public void testCanceledAfterExecutionFailedInInvoke() {
 		try {
 			Task task = createTask(InvokableWithExceptionInInvoke.class);
-			task.registerExecutionListener(listenerGateway);
+			task.registerExecutionListener(listener);
 
 			task.run();
 
@@ -516,7 +420,7 @@ public class TaskTest {
 	public void testExecutionFailesAfterCanceling() {
 		try {
 			Task task = createTask(InvokableWithExceptionOnTrigger.class);
-			task.registerExecutionListener(listenerGateway);
+			task.registerExecutionListener(listener);
 
 			// run the task asynchronous
 			task.startTaskThread();
@@ -553,7 +457,7 @@ public class TaskTest {
 	public void testExecutionFailsAfterTaskMarkedFailed() {
 		try {
 			Task task = createTask(InvokableWithExceptionOnTrigger.class);
-			task.registerExecutionListener(listenerGateway);
+			task.registerExecutionListener(listener);
 
 			// run the task asynchronous
 			task.startTaskThread();
@@ -634,8 +538,7 @@ public class TaskTest {
 		setInputGate(task, inputGate);
 
 		// Expected task state for each partition state
-		final Map<ExecutionState, ExecutionState> expected = Maps
-				.newHashMapWithExpectedSize(ExecutionState.values().length);
+		final Map<ExecutionState, ExecutionState> expected = new HashMap<>(ExecutionState.values().length);
 
 		// Fail the task for unexpected states
 		for (ExecutionState state : ExecutionState.values()) {
@@ -669,7 +572,7 @@ public class TaskTest {
 			f.setAccessible(true);
 			f.set(task, new SingleInputGate[]{inputGate});
 
-			Map<IntermediateDataSetID, SingleInputGate> byId = Maps.newHashMapWithExpectedSize(1);
+			Map<IntermediateDataSetID, SingleInputGate> byId = new HashMap<>(1);
 			byId.put(inputGate.getConsumedResultId(), inputGate);
 
 			f = Task.class.getDeclaredField("inputGatesById");
@@ -704,37 +607,62 @@ public class TaskTest {
 		ResultPartitionManager partitionManager = mock(ResultPartitionManager.class);
 		ResultPartitionConsumableNotifier consumableNotifier = mock(ResultPartitionConsumableNotifier.class);
 		NetworkEnvironment network = mock(NetworkEnvironment.class);
-		when(network.getPartitionManager()).thenReturn(partitionManager);
-		when(network.getPartitionConsumableNotifier()).thenReturn(consumableNotifier);
+		JobManagerCommunicationFactory jobManagerCommunicationFactory = mock(JobManagerCommunicationFactory.class);
+		when(network.getResultPartitionManager()).thenReturn(partitionManager);
 		when(network.getDefaultIOMode()).thenReturn(IOManager.IOMode.SYNC);
+		when(network.createKvStateTaskRegistry(any(JobID.class), any(JobVertexID.class)))
+				.thenReturn(mock(TaskKvStateRegistry.class));
+
+		when(jobManagerCommunicationFactory.createResultPartitionConsumableNotifier(any(Task.class))).thenReturn(consumableNotifier);
 		
-		return createTask(invokable, libCache, network);
+		return createTask(invokable, libCache, network, jobManagerCommunicationFactory);
 	}
 	
-	private Task createTask(Class<? extends AbstractInvokable> invokable,
-							LibraryCacheManager libCache,
-							NetworkEnvironment networkEnvironment) {
+	private Task createTask(
+		Class<? extends AbstractInvokable> invokable,
+		LibraryCacheManager libCache,
+		NetworkEnvironment networkEnvironment,
+		JobManagerCommunicationFactory jobManagerCommunicationFactory) {
 		
 		TaskDeploymentDescriptor tdd = createTaskDeploymentDescriptor(invokable);
+
+		InputSplitProvider inputSplitProvider = new TaskInputSplitProvider(
+			jobManagerGateway,
+			tdd.getJobID(),
+			tdd.getVertexID(),
+			tdd.getExecutionId(),
+			new FiniteDuration(60, TimeUnit.SECONDS));
+
+		CheckpointResponder checkpointResponder = new ActorGatewayCheckpointResponder(jobManagerGateway);
 		
 		return new Task(
-				tdd,
-				mock(MemoryManager.class),
-				mock(IOManager.class),
-				networkEnvironment,
-				mock(BroadcastVariableManager.class),
-				taskManagerGateway,
-				jobManagerGateway,
-				new FiniteDuration(60, TimeUnit.SECONDS),
-				libCache,
-				mock(FileCache.class),
-				new TaskManagerRuntimeInfo("localhost", new Configuration()));
+			tdd,
+			mock(MemoryManager.class),
+			mock(IOManager.class),
+			networkEnvironment,
+			jobManagerCommunicationFactory,
+			mock(BroadcastVariableManager.class),
+			taskManagerConnection,
+			inputSplitProvider,
+			checkpointResponder,
+			libCache,
+			mock(FileCache.class),
+			new TaskManagerRuntimeInfo("localhost", new Configuration(), System.getProperty("java.io.tmpdir")),
+			mock(TaskMetricGroup.class));
 	}
 
 	private TaskDeploymentDescriptor createTaskDeploymentDescriptor(Class<? extends AbstractInvokable> invokable) {
+		SerializedValue<ExecutionConfig> execConfig;
+		try {
+			execConfig = new SerializedValue<>(new ExecutionConfig());
+		} catch (IOException e) {
+			throw new RuntimeException(e);
+		}
+		
 		return new TaskDeploymentDescriptor(
-				new JobID(), new JobVertexID(), new ExecutionAttemptID(),
-				"Test Task", 0, 1,
+				new JobID(), "Test Job", new JobVertexID(), new ExecutionAttemptID(),
+				execConfig,
+				"Test Task", 1, 0, 1, 0,
 				new Configuration(), new Configuration(),
 				invokable.getName(),
 				Collections.<ResultPartitionDeploymentDescriptor>emptyList(),
@@ -870,9 +798,6 @@ public class TaskTest {
 	public static final class TestInvokableCorrect extends AbstractInvokable {
 
 		@Override
-		public void registerInputOutput() {}
-
-		@Override
 		public void invoke() {}
 
 		@Override
@@ -881,22 +806,8 @@ public class TaskTest {
 		}
 	}
 
-	public static final class InvokableWithExceptionInRegisterInOut extends AbstractInvokable {
-
-		@Override
-		public void registerInputOutput() {
-			throw new RuntimeException("test");
-		}
-
-		@Override
-		public void invoke() {}
-	}
-	
 	public static final class InvokableWithExceptionInInvoke extends AbstractInvokable {
 		
-		@Override
-		public void registerInputOutput() {}
-
 		@Override
 		public void invoke() throws Exception {
 			throw new Exception("test");
@@ -904,9 +815,6 @@ public class TaskTest {
 	}
 
 	public static final class InvokableWithExceptionOnTrigger extends AbstractInvokable {
-
-		@Override
-		public void registerInputOutput() {}
 
 		@Override
 		public void invoke() {
@@ -930,28 +838,7 @@ public class TaskTest {
 
 	public static abstract class InvokableNonInstantiable extends AbstractInvokable {}
 
-	public static final class InvokableBlockingInRegisterInOut extends AbstractInvokable {
-
-		@Override
-		public void registerInputOutput() {
-			awaitLatch.trigger();
-			
-			try {
-				triggerLatch.await();
-			}
-			catch (InterruptedException e) {
-				throw new RuntimeException();
-			}
-		}
-
-		@Override
-		public void invoke() {}
-	}
-
 	public static final class InvokableBlockingInInvoke extends AbstractInvokable {
-
-		@Override
-		public void registerInputOutput() {}
 
 		@Override
 		public void invoke() throws Exception {
@@ -965,10 +852,6 @@ public class TaskTest {
 	}
 
 	public static final class InvokableWithCancelTaskExceptionInInvoke extends AbstractInvokable {
-
-		@Override
-		public void registerInputOutput() {
-		}
 
 		@Override
 		public void invoke() throws Exception {

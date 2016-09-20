@@ -19,11 +19,13 @@
 
 package org.apache.flink.types.parser;
 
+import org.apache.flink.annotation.PublicEvolving;
 import org.apache.flink.types.DoubleValue;
 
 /**
  * Parses a text field into a DoubleValue.
  */
+@PublicEvolving
 public class DoubleValueParser extends FieldParser<DoubleValue> {
 	
 	private DoubleValue result;
@@ -37,6 +39,10 @@ public class DoubleValueParser extends FieldParser<DoubleValue> {
 
 		while (i < limit) {
 			if (i < delimLimit && delimiterNext(bytes, i, delimiter)) {
+				if (i == startPos) {
+					setErrorState(ParseErrorState.EMPTY_COLUMN);
+					return -1;
+				}
 				break;
 			}
 			i++;

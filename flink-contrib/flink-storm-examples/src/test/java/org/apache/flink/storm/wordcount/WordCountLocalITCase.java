@@ -18,11 +18,10 @@
 
 package org.apache.flink.storm.wordcount;
 
-import org.apache.flink.storm.util.StormTestBase;
-import org.apache.flink.storm.wordcount.WordCountLocal;
+import org.apache.flink.streaming.util.StreamingProgramTestBase;
 import org.apache.flink.test.testdata.WordCountData;
 
-public class WordCountLocalITCase extends StormTestBase {
+public class WordCountLocalITCase extends StreamingProgramTestBase {
 
 	protected String textPath;
 	protected String resultPath;
@@ -40,7 +39,7 @@ public class WordCountLocalITCase extends StormTestBase {
 
 	@Override
 	protected void testProgram() throws Exception {
-		WordCountLocal.main(new String[]{this.textPath, this.resultPath});
+		WordCountLocal.main(new String[] { this.textPath, this.resultPath });
 	}
 
 }

@@ -25,6 +25,7 @@ import org.apache.flink.runtime.deployment.ResultPartitionLocation;
 import org.apache.flink.runtime.event.TaskEvent;
 import org.apache.flink.runtime.executiongraph.ExecutionAttemptID;
 import org.apache.flink.runtime.io.network.ConnectionManager;
+import org.apache.flink.runtime.io.network.LocalConnectionManager;
 import org.apache.flink.runtime.io.network.TaskEventDispatcher;
 import org.apache.flink.runtime.io.network.buffer.Buffer;
 import org.apache.flink.runtime.io.network.buffer.BufferPool;
@@ -37,17 +38,21 @@ import org.apache.flink.runtime.io.network.partition.ResultSubpartitionView;
 import org.apache.flink.runtime.io.network.util.TestTaskEvent;
 import org.apache.flink.runtime.jobgraph.IntermediateDataSetID;
 import org.apache.flink.runtime.jobgraph.IntermediateResultPartitionID;
+import org.apache.flink.runtime.operators.testutils.UnregisteredTaskMetricsGroup;
 import org.junit.Test;
 import scala.Tuple2;
 
 import java.io.IOException;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 import static org.mockito.Matchers.any;
 import static org.mockito.Matchers.anyInt;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -62,7 +67,7 @@ public class SingleInputGateTest {
 	public void testBasicGetNextLogic() throws Exception {
 		// Setup
 		final SingleInputGate inputGate = new SingleInputGate(
-				"Test Task Name", new JobID(), new ExecutionAttemptID(), new IntermediateDataSetID(), 0, 2, mock(PartitionStateChecker.class));
+				"Test Task Name", new JobID(), new ExecutionAttemptID(), new IntermediateDataSetID(), 0, 2, mock(PartitionStateChecker.class), new UnregisteredTaskMetricsGroup.DummyIOMetricGroup());
 
 		final TestInputChannel[] inputChannels = new TestInputChannel[]{
 				new TestInputChannel(inputGate, 0),
@@ -109,7 +114,7 @@ public class SingleInputGateTest {
 		// Setup reader with one local and one unknown input channel
 		final IntermediateDataSetID resultId = new IntermediateDataSetID();
 
-		final SingleInputGate inputGate = new SingleInputGate("Test Task Name", new JobID(), new ExecutionAttemptID(), resultId, 0, 2, mock(PartitionStateChecker.class));
+		final SingleInputGate inputGate = new SingleInputGate("Test Task Name", new JobID(), new ExecutionAttemptID(), resultId, 0, 2, mock(PartitionStateChecker.class), new UnregisteredTaskMetricsGroup.DummyIOMetricGroup());
 		final BufferPool bufferPool = mock(BufferPool.class);
 		when(bufferPool.getNumberOfRequiredMemorySegments()).thenReturn(2);
 
@@ -118,12 +123,12 @@ public class SingleInputGateTest {
 		// Local
 		ResultPartitionID localPartitionId = new ResultPartitionID(new IntermediateResultPartitionID(), new ExecutionAttemptID());
 
-		InputChannel local = new LocalInputChannel(inputGate, 0, localPartitionId, partitionManager, taskEventDispatcher);
+		InputChannel local = new LocalInputChannel(inputGate, 0, localPartitionId, partitionManager, taskEventDispatcher, new UnregisteredTaskMetricsGroup.DummyIOMetricGroup());
 
 		// Unknown
 		ResultPartitionID unknownPartitionId = new ResultPartitionID(new IntermediateResultPartitionID(), new ExecutionAttemptID());
 
-		InputChannel unknown = new UnknownInputChannel(inputGate, 1, unknownPartitionId, partitionManager, taskEventDispatcher, mock(ConnectionManager.class), new Tuple2<Integer, Integer>(0, 0));
+		InputChannel unknown = new UnknownInputChannel(inputGate, 1, unknownPartitionId, partitionManager, taskEventDispatcher, mock(ConnectionManager.class), 0, 0, new UnregisteredTaskMetricsGroup.DummyIOMetricGroup());
 
 		// Set channels
 		inputGate.setInputChannel(localPartitionId.getPartitionId(), local);
@@ -147,6 +152,144 @@ public class SingleInputGateTest {
 
 		verify(partitionManager, times(2)).createSubpartitionView(any(ResultPartitionID.class), anyInt(), any(BufferProvider.class));
 		verify(taskEventDispatcher, times(2)).publish(any(ResultPartitionID.class), any(TaskEvent.class));
+	}
+
+	/**
+	 * Tests that an update channel does not trigger a partition request before the UDF has
+	 * requested any partitions. Otherwise, this can lead to races when registering a listener at
+	 * the gate (e.g. in UnionInputGate), which can result in missed buffer notifications at the
+	 * listener.
+	 */
+	@Test
+	public void testUpdateChannelBeforeRequest() throws Exception {
+		SingleInputGate inputGate = new SingleInputGate(
+				"t1",
+				new JobID(),
+				new ExecutionAttemptID(),
+				new IntermediateDataSetID(),
+				0,
+				1,
+				mock(PartitionStateChecker.class), new UnregisteredTaskMetricsGroup.DummyIOMetricGroup());
+
+		ResultPartitionManager partitionManager = mock(ResultPartitionManager.class);
+
+		InputChannel unknown = new UnknownInputChannel(
+			inputGate,
+			0,
+			new ResultPartitionID(),
+			partitionManager,
+			new TaskEventDispatcher(),
+			new LocalConnectionManager(),
+			0,
+			0,
+			new UnregisteredTaskMetricsGroup.DummyIOMetricGroup());
+
+		inputGate.setInputChannel(unknown.partitionId.getPartitionId(), unknown);
+
+		// Update to a local channel and verify that no request is triggered
+		inputGate.updateInputChannel(new InputChannelDeploymentDescriptor(
+				unknown.partitionId,
+				ResultPartitionLocation.createLocal()));
+
+		verify(partitionManager, never()).createSubpartitionView(
+				any(ResultPartitionID.class), anyInt(), any(BufferProvider.class));
+	}
+
+	/**
+	 * Tests that the release of the input gate is noticed while polling the
+	 * channels for available data.
+	 */
+	@Test
+	public void testReleaseWhilePollingChannel() throws Exception {
+		final AtomicReference<Exception> asyncException = new AtomicReference<>();
+
+		// Setup the input gate with a single channel that does nothing
+		final SingleInputGate inputGate = new SingleInputGate(
+				"InputGate",
+				new JobID(),
+				new ExecutionAttemptID(),
+				new IntermediateDataSetID(),
+				0,
+				1,
+				mock(PartitionStateChecker.class),
+				new UnregisteredTaskMetricsGroup.DummyIOMetricGroup());
+
+		InputChannel unknown = new UnknownInputChannel(
+			inputGate,
+			0,
+			new ResultPartitionID(),
+			new ResultPartitionManager(),
+			new TaskEventDispatcher(),
+			new LocalConnectionManager(),
+			0,
+			0,
+			new UnregisteredTaskMetricsGroup.DummyIOMetricGroup());
+
+		inputGate.setInputChannel(unknown.partitionId.getPartitionId(), unknown);
+
+		// Start the consumer in a separate Thread
+		Thread asyncConsumer = new Thread() {
+			@Override
+			public void run() {
+				try {
+					inputGate.getNextBufferOrEvent();
+				} catch (Exception e) {
+					asyncException.set(e);
+				}
+			}
+		};
+		asyncConsumer.start();
+
+		// Wait for blocking queue poll call and release input gate
+		boolean success = false;
+		for (int i = 0; i < 50; i++) {
+			if (asyncConsumer != null && asyncConsumer.isAlive()) {
+				StackTraceElement[] stackTrace = asyncConsumer.getStackTrace();
+				success = isInBlockingQueuePoll(stackTrace);
+			}
+
+			if (success) {
+				break;
+			} else {
+				// Retry
+				Thread.sleep(500);
+			}
+		}
+
+		// Verify that async consumer is in blocking request
+		assertTrue("Did not trigger blocking buffer request.", success);
+
+		// Release the input gate
+		inputGate.releaseAllResources();
+
+		// Wait for Thread to finish and verify expected Exceptions. If the
+		// input gate status is not properly checked during requests, this
+		// call will never return.
+		asyncConsumer.join();
+
+		assertNotNull(asyncException.get());
+		assertEquals(IllegalStateException.class, asyncException.get().getClass());
+	}
+
+	/**
+	 * Returns whether the stack trace represents a Thread in a blocking queue
+	 * poll call.
+	 *
+	 * @param stackTrace Stack trace of the Thread to check
+	 *
+	 * @return Flag indicating whether the Thread is in a blocking queue poll
+	 * call.
+	 */
+	private boolean isInBlockingQueuePoll(StackTraceElement[] stackTrace) {
+		for (StackTraceElement elem : stackTrace) {
+			if (elem.getMethodName().equals("poll") &&
+					elem.getClassName().equals("java.util.concurrent.LinkedBlockingQueue")) {
+
+				return true;
+			}
+		}
+
+		return false;
 	}
 
 	// ---------------------------------------------------------------------------------------------

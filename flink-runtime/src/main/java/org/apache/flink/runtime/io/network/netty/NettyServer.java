@@ -20,7 +20,6 @@ package org.apache.flink.runtime.io.network.netty;
 
 import com.google.common.util.concurrent.ThreadFactoryBuilder;
 import io.netty.bootstrap.ServerBootstrap;
-import io.netty.buffer.PooledByteBufAllocator;
 import io.netty.channel.ChannelFuture;
 import io.netty.channel.ChannelInitializer;
 import io.netty.channel.ChannelOption;
@@ -34,10 +33,11 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
+import java.net.InetSocketAddress;
 import java.util.concurrent.ThreadFactory;
 
-import static com.google.common.base.Preconditions.checkNotNull;
-import static com.google.common.base.Preconditions.checkState;
+import static org.apache.flink.util.Preconditions.checkNotNull;
+import static org.apache.flink.util.Preconditions.checkState;
 
 class NettyServer {
 
@@ -51,11 +51,14 @@ class NettyServer {
 
 	private ChannelFuture bindFuture;
 
+	private InetSocketAddress localAddress;
+
 	NettyServer(NettyConfig config) {
 		this.config = checkNotNull(config);
+		localAddress = null;
 	}
 
-	void init(final NettyProtocol protocol) throws IOException {
+	void init(final NettyProtocol protocol, NettyBufferPool nettyBufferPool) throws IOException {
 		checkState(bootstrap == null, "Netty server has already been initialized.");
 
 		long start = System.currentTimeMillis();
@@ -94,8 +97,8 @@ class NettyServer {
 		bootstrap.localAddress(config.getServerAddress(), config.getServerPort());
 
 		// Pooled allocators for Netty's ByteBuf instances
-		bootstrap.option(ChannelOption.ALLOCATOR, PooledByteBufAllocator.DEFAULT);
-		bootstrap.childOption(ChannelOption.ALLOCATOR, PooledByteBufAllocator.DEFAULT);
+		bootstrap.option(ChannelOption.ALLOCATOR, nettyBufferPool);
+		bootstrap.childOption(ChannelOption.ALLOCATOR, nettyBufferPool);
 
 		if (config.getServerConnectBacklog() > 0) {
 			bootstrap.option(ChannelOption.SO_BACKLOG, config.getServerConnectBacklog());
@@ -129,12 +132,22 @@ class NettyServer {
 
 		bindFuture = bootstrap.bind().syncUninterruptibly();
 
+		localAddress = (InetSocketAddress) bindFuture.channel().localAddress();
+
 		long end = System.currentTimeMillis();
 		LOG.info("Successful initialization (took {} ms). Listening on SocketAddress {}.", (end - start), bindFuture.channel().localAddress().toString());
 	}
 
 	NettyConfig getConfig() {
 		return config;
+	}
+
+	ServerBootstrap getBootstrap() {
+		return bootstrap;
+	}
+
+	public InetSocketAddress getLocalAddress() {
+		return localAddress;
 	}
 
 	void shutdown() {

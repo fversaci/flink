@@ -24,11 +24,13 @@ import java.util.Map;
 
 import org.apache.flink.configuration.ConfigConstants;
 import org.apache.flink.configuration.Configuration;
+import org.apache.flink.runtime.clusterframework.types.ResourceID;
 import org.apache.flink.runtime.taskmanager.TaskManager;
-import org.apache.flink.runtime.StreamingMode;
 import org.apache.flink.runtime.util.EnvironmentInformation;
-import org.apache.flink.yarn.YarnTaskManager;
 
+import org.apache.flink.runtime.util.JvmShutdownSafeguard;
+import org.apache.flink.runtime.util.SignalHandler;
+import org.apache.flink.util.Preconditions;
 import org.apache.hadoop.security.UserGroupInformation;
 import org.apache.hadoop.security.token.Token;
 import org.apache.hadoop.security.token.TokenIdentifier;
@@ -38,25 +40,21 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
- * The entry point for running a TaskManager in a YARN container. The YARN container will invoke
- * this class' main method.
+ * The entry point for running a TaskManager in a YARN container.
  */
 public class YarnTaskManagerRunner {
 
 	private static final Logger LOG = LoggerFactory.getLogger(YarnTaskManagerRunner.class);
 
-	public static <T extends YarnTaskManager> void runYarnTaskManager(String[] args, final Class<T> taskManager) throws IOException {
+	public static void runYarnTaskManager(String[] args, final Class<? extends YarnTaskManager> taskManager) throws IOException {
 		EnvironmentInformation.logEnvironmentInfo(LOG, "YARN TaskManager", args);
-		EnvironmentInformation.checkJavaVersion();
-		org.apache.flink.runtime.util.SignalHandler.register(LOG);
+		SignalHandler.register(LOG);
+		JvmShutdownSafeguard.installAsShutdownHook(LOG);
 
 		// try to parse the command line arguments
 		final Configuration configuration;
-		final StreamingMode mode;
 		try {
-			scala.Tuple2<Configuration, StreamingMode> res = TaskManager.parseArgsAndLoadConfig(args);
-			configuration = res._1();
-			mode = res._2();
+			configuration = TaskManager.parseArgsAndLoadConfig(args);
 		}
 		catch (Throwable t) {
 			LOG.error(t.getMessage(), t);
@@ -66,7 +64,7 @@ public class YarnTaskManagerRunner {
 
 		// read the environment variables for YARN
 		final Map<String, String> envs = System.getenv();
-		final String yarnClientUsername = envs.get(FlinkYarnClient.ENV_CLIENT_USERNAME);
+		final String yarnClientUsername = envs.get(YarnConfigKeys.ENV_CLIENT_USERNAME);
 		final String localDirs = envs.get(Environment.LOCAL_DIRS.key());
 
 		// configure local directory
@@ -90,12 +88,17 @@ public class YarnTaskManagerRunner {
 		for (Token<? extends TokenIdentifier> toks : UserGroupInformation.getCurrentUser().getTokens()) {
 			ugi.addToken(toks);
 		}
+
+		// Infer the resource identifier from the environment variable
+		String containerID = Preconditions.checkNotNull(envs.get(YarnFlinkResourceManager.ENV_FLINK_CONTAINER_ID));
+		final ResourceID resourceId = new ResourceID(containerID);
+		LOG.info("ResourceID assigned for this container: {}", resourceId);
+
 		ugi.doAs(new PrivilegedAction<Object>() {
 			@Override
 			public Object run() {
 				try {
-					TaskManager.selectNetworkInterfaceAndRunTaskManager(configuration,
-						mode, taskManager);
+					TaskManager.selectNetworkInterfaceAndRunTaskManager(configuration, resourceId, taskManager);
 				}
 				catch (Throwable t) {
 					LOG.error("Error while starting the TaskManager", t);
@@ -104,10 +107,5 @@ public class YarnTaskManagerRunner {
 				return null;
 			}
 		});
-	}
-
-
-	public static void main(final String[] args) throws IOException {
-		runYarnTaskManager(args, YarnTaskManager.class);
 	}
 }

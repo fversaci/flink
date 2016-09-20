@@ -7,7 +7,7 @@
  * "License"); you may not use this file except in compliance
  * with the License.  You may obtain a copy of the License at
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -18,11 +18,19 @@
 
 package org.apache.flink.runtime.state;
 
-import org.apache.flink.runtime.state.StateHandle;
+import org.apache.flink.core.fs.FSDataInputStream;
 
-import java.io.InputStream;
+import java.io.IOException;
 
 /**
- * A state handle that produces an input stream when resolved.
+ * A {@link StateObject} that represents state that was written to a stream. The data can be read
+ * back via {@link #openInputStream()}.
  */
-public interface StreamStateHandle extends StateHandle<InputStream> {}
+public interface StreamStateHandle extends StateObject {
+
+	/**
+	 * Returns an {@link FSDataInputStream} that can be used to read back the data that
+	 * was previously written to the stream.
+	 */
+	FSDataInputStream openInputStream() throws IOException;
+}

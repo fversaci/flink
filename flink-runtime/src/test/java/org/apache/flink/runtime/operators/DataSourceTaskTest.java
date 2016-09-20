@@ -23,6 +23,7 @@ import java.io.BufferedWriter;
 import java.io.File;
 import java.io.FileWriter;
 import java.io.IOException;
+import java.lang.reflect.Field;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -43,11 +44,13 @@ import org.apache.flink.util.MutableObjectIterator;
 import org.junit.After;
 import org.junit.Test;
 import org.junit.runner.RunWith;
+import org.powermock.core.classloader.annotations.PowerMockIgnore;
 import org.powermock.core.classloader.annotations.PrepareForTest;
 import org.powermock.modules.junit4.PowerMockRunner;
 
 @RunWith(PowerMockRunner.class)
 @PrepareForTest({Task.class, ResultPartitionWriter.class})
+@PowerMockIgnore({"javax.management.*", "com.sun.jndi.*"})
 public class DataSourceTaskTest extends TaskTestBase {
 
 	private static final int MEMORY_MANAGER_SIZE = 1024 * 1024;
@@ -94,7 +97,18 @@ public class DataSourceTaskTest extends TaskTestBase {
 			Assert.fail("Invoke method caused exception.");
 		}
 		
-		Assert.assertTrue("Invalid output size. Expected: "+(keyCnt*valCnt)+" Actual: "+this.outList.size(),
+		try {
+			Field formatField = DataSourceTask.class.getDeclaredField("format");
+			formatField.setAccessible(true);
+			MockInputFormat inputFormat = (MockInputFormat) formatField.get(testTask);
+			Assert.assertTrue("Invalid status of the input format. Expected for opened: true, Actual: " + inputFormat.opened, inputFormat.opened);
+			Assert.assertTrue("Invalid status of the input format. Expected for closed: true, Actual: " + inputFormat.closed, inputFormat.closed);
+		} catch (Exception e) {
+			System.err.println(e);
+			Assert.fail("Reflection error while trying to validate inputFormat status.");
+		}
+
+		Assert.assertTrue("Invalid output size. Expected: " + (keyCnt*valCnt) + " Actual: " + this.outList.size(),
 			this.outList.size() == keyCnt * valCnt);
 		
 		HashMap<Integer,HashSet<Integer>> keyValueCountMap = new HashMap<>(keyCnt);
@@ -207,28 +221,26 @@ public class DataSourceTaskTest extends TaskTestBase {
 	
 	private static class InputFilePreparator {
 		public static void prepareInputFile(MutableObjectIterator<Record> inIt, String inputFilePath, boolean insertInvalidData)
-		throws IOException
-		{
-			FileWriter fw = new FileWriter(inputFilePath);
-			BufferedWriter bw = new BufferedWriter(fw);
-			
-			if (insertInvalidData) {
-				bw.write("####_I_AM_INVALID_########\n");
+		throws IOException {
+
+			try (BufferedWriter bw = new BufferedWriter(new FileWriter(inputFilePath))) {
+				if (insertInvalidData) {
+					bw.write("####_I_AM_INVALID_########\n");
+				}
+
+				Record rec = new Record();
+				while ((rec = inIt.next(rec)) != null) {
+					IntValue key = rec.getField(0, IntValue.class);
+					IntValue value = rec.getField(1, IntValue.class);
+
+					bw.write(key.getValue() + "_" + value.getValue() + "\n");
+				}
+				if (insertInvalidData) {
+					bw.write("####_I_AM_INVALID_########\n");
+				}
+
+				bw.flush();
 			}
-			
-			Record rec = new Record();
-			while ((rec = inIt.next(rec)) != null) {
-				IntValue key = rec.getField(0, IntValue.class);
-				IntValue value = rec.getField(1, IntValue.class);
-				
-				bw.write(key.getValue() + "_" + value.getValue() + "\n");
-			}
-			if (insertInvalidData) {
-				bw.write("####_I_AM_INVALID_########\n");
-			}
-			
-			bw.flush();
-			bw.close();
 		}
 	}
 	
@@ -237,6 +249,9 @@ public class DataSourceTaskTest extends TaskTestBase {
 		
 		private final IntValue key = new IntValue();
 		private final IntValue value = new IntValue();
+
+		private boolean opened = false;
+		private boolean closed = false;
 		
 		@Override
 		public Record readRecord(Record target, byte[] record, int offset, int numBytes) {
@@ -254,6 +269,18 @@ public class DataSourceTaskTest extends TaskTestBase {
 			target.setField(0, this.key);
 			target.setField(1, this.value);
 			return target;
+		}
+
+		public void openInputFormat() {
+			//ensure this is called only once
+			Assert.assertFalse("Invalid status of the input format. Expected for opened: false, Actual: " + opened, opened);
+			opened = true;
+		}
+
+		public void closeInputFormat() {
+			//ensure this is called only once
+			Assert.assertFalse("Invalid status of the input format. Expected for closed: false, Actual: " + closed, closed);
+			closed = true;
 		}
 	}
 	

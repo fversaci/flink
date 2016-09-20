@@ -29,6 +29,8 @@ angular.module('flinkApp', ['ui.router', 'angularMoment'])
 # --------------------------------------
 
 .value 'flinkConfig', {
+  jobServer: ''
+# jobServer: 'http://localhost:8081/'
   "refresh-interval": 10000
 }
 
@@ -49,6 +51,14 @@ angular.module('flinkApp', ['ui.router', 'angularMoment'])
 
 .config ($uiViewScrollProvider) ->
   $uiViewScrollProvider.useAnchorScroll()
+
+# --------------------------------------
+
+.run ($rootScope, $state) ->
+  $rootScope.$on '$stateChangeStart', (event, toState, toParams, fromState) ->
+    if toState.redirectTo
+      event.preventDefault()
+      $state.go toState.redirectTo, toParams
 
 # --------------------------------------
 
@@ -84,18 +94,25 @@ angular.module('flinkApp', ['ui.router', 'angularMoment'])
 
   .state "single-job.plan",
     url: ""
-    abstract: true
+    redirectTo: "single-job.plan.subtasks"
     views:
       details:
         templateUrl: "partials/jobs/job.plan.html"
         controller: 'JobPlanController'
 
-  .state "single-job.plan.overview",
+  .state "single-job.plan.subtasks",
     url: ""
     views:
       'node-details':
-        templateUrl: "partials/jobs/job.plan.node-list.overview.html"
-        controller: 'JobPlanOverviewController'
+        templateUrl: "partials/jobs/job.plan.node-list.subtasks.html"
+        controller: 'JobPlanSubtasksController'
+
+  .state "single-job.plan.taskmanagers",
+    url: "/taskmanagers"
+    views:
+      'node-details':
+        templateUrl: "partials/jobs/job.plan.node-list.taskmanagers.html"
+        controller: 'JobPlanTaskManagersController'
 
   .state "single-job.plan.accumulators",
     url: "/accumulators"
@@ -103,6 +120,20 @@ angular.module('flinkApp', ['ui.router', 'angularMoment'])
       'node-details':
         templateUrl: "partials/jobs/job.plan.node-list.accumulators.html"
         controller: 'JobPlanAccumulatorsController'
+
+  .state "single-job.plan.checkpoints",
+    url: "/checkpoints"
+    views:
+      'node-details':
+        templateUrl: "partials/jobs/job.plan.node-list.checkpoints.html"
+        controller: 'JobPlanCheckpointsController'
+
+  .state "single-job.plan.backpressure",
+    url: "/backpressure"
+    views:
+      'node-details':
+        templateUrl: "partials/jobs/job.plan.node-list.backpressure.html"
+        controller: 'JobPlanBackPressureController'
 
   .state "single-job.timeline",
     url: "/timeline"
@@ -149,13 +180,27 @@ angular.module('flinkApp', ['ui.router', 'angularMoment'])
       views:
         main:
           templateUrl: "partials/taskmanager/taskmanager.html"
-          controller: 'SingleTaskManagerController'
 
   .state "single-manager.metrics",
     url: "/metrics"
     views:
       details:
         templateUrl: "partials/taskmanager/taskmanager.metrics.html"
+        controller: 'SingleTaskManagerController'
+
+  .state "single-manager.stdout",
+    url: "/stdout"
+    views:
+      details:
+        templateUrl: "partials/taskmanager/taskmanager.stdout.html"
+        controller: 'SingleTaskManagerStdoutController'
+
+  .state "single-manager.log",
+    url: "/log"
+    views:
+      details:
+        templateUrl: "partials/taskmanager/taskmanager.log.html"
+        controller: 'SingleTaskManagerLogsController'
 
   .state "jobmanager",
       url: "/jobmanager"
@@ -183,5 +228,12 @@ angular.module('flinkApp', ['ui.router', 'angularMoment'])
       details:
         templateUrl: "partials/jobmanager/log.html"
         controller: 'JobManagerLogsController'
+
+  .state "submit",
+      url: "/submit"
+      views:
+        main:
+          templateUrl: "partials/submit.html"
+          controller: "JobSubmitController"
 
   $urlRouterProvider.otherwise "/overview"

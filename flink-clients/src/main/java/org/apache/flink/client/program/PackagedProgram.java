@@ -86,6 +86,8 @@ public class PackagedProgram {
 	
 	private Plan plan;
 
+	private String savepointPath;
+
 	/**
 	 * Creates an instance that wraps the plan defined in the jar file using the given
 	 * argument.
@@ -187,7 +189,7 @@ public class PackagedProgram {
 		}
 		
 		// now that we have an entry point, we can extract the nested jar files (if any)
-		this.extractedTempLibraries = extractContainedLibaries(jarFileUrl);
+		this.extractedTempLibraries = extractContainedLibraries(jarFileUrl);
 		this.classpaths = classpaths;
 		this.userCodeClassLoader = JobWithJars.buildUserCodeClassLoader(getAllLibraries(), classpaths, getClass().getClassLoader());
 		
@@ -254,9 +256,15 @@ public class PackagedProgram {
 					Program.class.getName() + " interface.");
 		}
 	}
-	
-	
-	
+
+	public void setSavepointPath(String savepointPath) {
+		this.savepointPath = savepointPath;
+	}
+
+	public String getSavepointPath() {
+		return savepointPath;
+	}
+
 	public String[] getArguments() {
 		return this.args;
 	}
@@ -476,6 +484,10 @@ public class PackagedProgram {
 	
 	private static void callMainMethod(Class<?> entryClass, String[] args) throws ProgramInvocationException {
 		Method mainMethod;
+		if (!Modifier.isPublic(entryClass.getModifiers())) {
+			throw new ProgramInvocationException("The class " + entryClass.getName() + " must be public.");
+		}
+
 		try {
 			mainMethod = entryClass.getMethod("main", String[].class);
 		} catch (NoSuchMethodException e) {
@@ -574,8 +586,11 @@ public class PackagedProgram {
 	}
 	
 	private static Class<?> loadMainClass(String className, ClassLoader cl) throws ProgramInvocationException {
+		ClassLoader contextCl = null;
 		try {
-			return Class.forName(className, true, cl);
+			contextCl = Thread.currentThread().getContextClassLoader();
+			Thread.currentThread().setContextClassLoader(cl);
+			return Class.forName(className, false, cl);
 		}
 		catch (ClassNotFoundException e) {
 			throw new ProgramInvocationException("The program's entry point class '" + className
@@ -592,6 +607,10 @@ public class PackagedProgram {
 		catch (Throwable t) {
 			throw new ProgramInvocationException("The program's entry point class '" + className
 				+ "' caused an exception during initialization: "+ t.getMessage(), t);
+		} finally {
+			if (contextCl != null) {
+				Thread.currentThread().setContextClassLoader(contextCl);
+			}
 		}
 	}
 	
@@ -623,7 +642,7 @@ public class PackagedProgram {
 	 * @return The file names of the extracted temporary files.
 	 * @throws ProgramInvocationException Thrown, if the extraction process failed.
 	 */
-	private static List<File> extractContainedLibaries(URL jarFile) throws ProgramInvocationException {
+	public static List<File> extractContainedLibraries(URL jarFile) throws ProgramInvocationException {
 		
 		Random rnd = new Random();
 		
@@ -722,7 +741,7 @@ public class PackagedProgram {
 		}
 	}
 	
-	private static void deleteExtractedLibraries(List<File> tempLibraries) {
+	public static void deleteExtractedLibraries(List<File> tempLibraries) {
 		for (File f : tempLibraries) {
 			f.delete();
 		}
